@@ -446,6 +446,21 @@ class ProjectUserQuota(BASE, NovaBase):
     hard_limit = Column(Integer)
 
 
+class DomainProjectUserQuota(BASE, NovaBase):
+    """Represents a single quota override for a user with in a domain."""
+    __tablename__ = 'domain_project_user_quotas'
+    uniq_name = "uniq_project_user_quotas0domain_id0user_id0project_id"
+    "0resource0deleted"
+    __table_args__ = (
+        schema.UniqueConstraint("domain_id", "user_id", "project_id",
+                            "resource", "deleted", name=uniq_name),
+        Index('project_user_quotas_project_id_deleted_idx',
+              'project_id', 'deleted'),
+        Index('project_user_quotas_user_id_deleted_idx',
+              'user_id', 'deleted')
+    )
+
+
 class QuotaClass(BASE, NovaBase):
     """Represents a single quota override for a quota class.
 
@@ -1409,3 +1424,4 @@ class PciDevice(BASE, NovaBase):
                             primaryjoin='and_('
                             'PciDevice.instance_uuid == Instance.uuid,'
                             'PciDevice.deleted == 0)')
+

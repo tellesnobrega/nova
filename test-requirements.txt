@@ -11,7 +11,6 @@ libvirt-python>=1.2.5                   # LGPLv2+
 mock>=1.0
 mox>=0.5.3
 MySQL-python
-psycopg2
 pylint==0.25.2
 python-ironicclient>=0.2.1
 python-subunit>=0.0.18

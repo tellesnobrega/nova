@@ -795,6 +795,49 @@ class QuotaEngineTestCase(test.TestCase):
                           'test_resource3', 'test_resource4'])
 
 
+class DomainQuotaDriverTestCase(test.TestCase):
+
+    def setUp(self):
+        super(DomainQuotaDriverTestCase, self).setUp()
+        self.driver = quota.DbQuotaDriver()
+        self.driverDomain = quota.DomainQuotaDriver()
+        self.calls = []
+
+        self.useFixture(test.TimeOverride())
+
+    def test_get_defaults(self):
+        # Use our pre-defined resources
+        self._stub_quota_class_get_default()
+        result = self.driverDomain.get_defaults(None, quota.QUOTAS._resources)
+
+        self.assertEqual(result, dict(
+                instances=-1,
+                cores=-1,
+                ram=-1,
+                floating_ips=-1,
+                fixed_ips=-1,
+                metadata_items=-1,
+                injected_files=-1,
+                injected_file_content_bytes=-1,
+                injected_file_path_bytes=-1,
+                security_groups=-1,
+                security_group_rules=-1,
+                key_pairs=-1,
+                ))
+
+    def _stub_quota_class_get_default(self):
+        # Stub out quota_class_get_default
+        def fake_qcgd(context):
+            self.calls.append('quota_class_get_default')
+            return dict(
+                instances=-1,
+                ram=-1,
+                metadata_items=-1,
+                injected_file_content_bytes=-1,
+                )
+        self.stubs.Set(db, 'quota_class_get_default', fake_qcgd)
+
+
 class DbQuotaDriverTestCase(test.TestCase):
     def setUp(self):
         super(DbQuotaDriverTestCase, self).setUp()
@@ -818,7 +861,6 @@ class DbQuotaDriverTestCase(test.TestCase):
                    )
 
         self.driver = quota.DbQuotaDriver()
-
         self.calls = []
 
         self.useFixture(test.TimeOverride())

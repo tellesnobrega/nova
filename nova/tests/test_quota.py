@@ -831,6 +831,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
 
     def setUp(self):
         super(DomainQuotaDriverTestCase, self).setUp()
+<<<<<<< HEAD
 
         self.flags(quota_instances=10,
                    quota_cores=20,
@@ -851,6 +852,12 @@ class DomainQuotaDriverTestCase(test.TestCase):
         self.driver = quota.DbQuotaDriver()
         self.driverDomain = quota.DomainQuotaDriver()
         self.calls = []
+=======
+        self.driver = quota.DbQuotaDriver()
+        self.driverDomain = quota.DomainQuotaDriver()
+        self.calls = []
+
+>>>>>>> US-12
         self.useFixture(test.TimeOverride())
 
     def test_get_defaults(self):
@@ -859,6 +866,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
         result = self.driverDomain.get_defaults(None, quota.QUOTAS._resources)
 
         self.assertEqual(result, dict(
+<<<<<<< HEAD
                 instances=10,
                 cores=20,
                 ram=50 * 1024,
@@ -871,6 +879,20 @@ class DomainQuotaDriverTestCase(test.TestCase):
                 security_groups=10,
                 security_group_rules=20,
                 key_pairs=100,
+=======
+                instances=-1,
+                cores=-1,
+                ram=-1,
+                floating_ips=-1,
+                fixed_ips=-1,
+                metadata_items=-1,
+                injected_files=-1,
+                injected_file_content_bytes=-1,
+                injected_file_path_bytes=-1,
+                security_groups=-1,
+                security_group_rules=-1,
+                key_pairs=-1,
+>>>>>>> US-12
                 ))
 
     def _stub_quota_class_get_default(self):
@@ -879,12 +901,17 @@ class DomainQuotaDriverTestCase(test.TestCase):
             self.calls.append('quota_class_get_default')
             return dict(
                 instances=-1,
+<<<<<<< HEAD
                 ram=10,
+=======
+                ram=-1,
+>>>>>>> US-12
                 metadata_items=-1,
                 injected_file_content_bytes=-1,
                 )
         self.stubs.Set(db, 'quota_class_get_default', fake_qcgd)
 
+<<<<<<< HEAD
     def _stub_get_domain_quotas(self):
         def fake_get_domain_quotas(context, resources, domain_id,
                                     quota_class=None, defaults=True,
@@ -1004,6 +1031,8 @@ class DomainQuotaDriverTestCase(test.TestCase):
                                            dict(instances=2),
                                             expire=expire)
 
+=======
+>>>>>>> US-12
 
 class DbQuotaDriverTestCase(test.TestCase):
     def setUp(self):

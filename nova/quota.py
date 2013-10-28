@@ -1537,6 +1537,56 @@ class DomainQuotaDriver(object):
             quotas[resource.name] = -1
         return quotas
 
+    def _get_quotas(self, context, resources, keys, has_sync, project_id=None,
+                    user_id=None):
+        """
+        A helper method which retrieves the quotas for the specific
+        resources identified by keys, and which apply to the current
+        context.
+
+        :param context: The request context, for access checks.
+        :param resources: A dictionary of the registered resources.
+        :param keys: A list of the desired quotas to retrieve.
+        :param has_sync: If True, indicates that the resource must
+                         have a sync function; if False, indicates
+                         that the resource must NOT have a sync
+                         function.
+        :param project_id: Specify the project_id if current context
+                           is admin and admin wants to impact on
+                           common user's tenant.
+        :param user_id: Specify the user_id if current context
+                        is admin and admin wants to impact on
+                        common user.
+        """
+
+        # Filter resources
+        if has_sync:
+            sync_filt = lambda x: hasattr(x, 'sync')
+        else:
+            sync_filt = lambda x: not hasattr(x, 'sync')
+        desired = set(keys)
+        sub_resources = dict((k, v) for k, v in resources.items()
+                             if k in desired and sync_filt(v))
+
+        # Make sure we accounted for all of them...
+        if len(keys) != len(sub_resources):
+            unknown = desired - set(sub_resources.keys())
+            raise exception.QuotaResourceUnknown(unknown=sorted(unknown))
+
+        if user_id:
+            # Grab and return the quotas (without usages)
+            quotas = self.get_user_quotas(context, sub_resources,
+                                          project_id, user_id,
+                                          context.quota_class, usages=False)
+        else:
+            # Grab and return the quotas (without usages)
+            quotas = self.get_project_quotas(context, sub_resources,
+                                             project_id,
+                                             context.quota_class,
+                                             usages=False)
+
+        return dict((k, v['limit']) for k, v in quotas.items())
+
     def get_project_quotas(self, context, resources, project_id,
                            quota_class=None, defaults=True,
                            usages=True, remains=False):
@@ -2472,6 +2522,7 @@ class QuotaEngine(object):
 
     @property
     def _driver(self):
+        self._domain_driver = CONF.domain_quota_driver
         if self.__driver:
             return self.__driver
         if not self._driver_cls:

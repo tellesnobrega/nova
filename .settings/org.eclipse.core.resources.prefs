@@ -1,5 +1,8 @@
 eclipse.preferences.version=1
+<<<<<<< HEAD
 encoding//.venv/lib/python2.7/site-packages/babel/messages/catalog.py=utf-8
 encoding//.venv/lib/python2.7/site-packages/pygments/lexers/compiled.py=utf-8
 encoding//.venv/lib/python2.7/site-packages/pygments/lexers/shell.py=utf-8
+=======
+>>>>>>> US11 Create DomainQuotaDB
 encoding//nova/tests/db/test_db_api.py=UTF8

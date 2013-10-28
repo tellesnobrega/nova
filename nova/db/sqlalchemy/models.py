@@ -478,13 +478,23 @@ class DomainProjectUserQuota(BASE, NovaBase):
     uniq_name = "uniq_project_user_quotas0domain_id0user_id0project_id"
     "0resource0deleted"
     __table_args__ = (
-        schema.UniqueConstraint("domain_id", "user_id", "project_id",
-                            "resource", "deleted", name=uniq_name),
-        Index('project_user_quotas_project_id_deleted_idx',
-              'project_id', 'deleted'),
-        Index('project_user_quotas_user_id_deleted_idx',
-              'user_id', 'deleted')
+        schema.UniqueConstraint("domain_id", "resource",
+                                "deleted", name=uniq_name),
+        Index('domain_quotas_domain_id_deleted_idx',
+              'domain_id', 'deleted'),
+
     )
+    id = Column(Integer, primary_key=True, nullable=False)
+
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)
+    deleted_at = Column(DateTime)
+    deleted = Column(Integer)
+
+    domain_id = Column(String(255), nullable=False)
+
+    resource = Column(String(255), nullable=False)
+    hard_limit = Column(Integer)
 
 
 class QuotaClass(BASE, NovaBase):
@@ -599,6 +609,9 @@ class DomainReservation(BASE, NovaBase):
     updated_at = Column(DateTime(timezone=False))
     deleted_at = Column(DateTime(timezone=False))
     deleted = Column(Integer, default=0)
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)
+    deleted_at = Column(DateTime)
 
     uuid = Column(String(36), nullable=False)
     usage_id = Column(Integer, ForeignKey('domain_quota_usages.id'),
@@ -1509,4 +1522,3 @@ class PciDevice(BASE, NovaBase):
                             primaryjoin='and_('
                             'PciDevice.instance_uuid == Instance.uuid,'
                             'PciDevice.deleted == 0)')
-

@@ -520,6 +520,7 @@ class BaseWalkMigrationTestCase(BaseMigrationTestCase):
                 if pre_upgrade:
                     data = pre_upgrade(engine)
 
+
             self.migration_api.upgrade(engine, self.REPOSITORY, version)
             self.assertEqual(version,
                              self.migration_api.db_version(engine,
@@ -883,6 +884,7 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
                                  if [c.name for c in i.columns][:1] ==
                                     ['host']]))
 
+    # migration 266 - make user quotas key and value
     def _check_266(self, engine, data):
         domain_quota_usages = db_utils.get_table(engine, 'domain_quota_usages')
         domain_reservations = db_utils.get_table(engine, 'domain_reservations')

@@ -446,19 +446,29 @@ class ProjectUserQuota(BASE, NovaBase):
     hard_limit = Column(Integer)
 
 
-class DomainProjectUserQuota(BASE, NovaBase):
-    """Represents a single quota override for a user with in a domain."""
-    __tablename__ = 'domain_project_user_quotas'
-    uniq_name = "uniq_project_user_quotas0domain_id0user_id0project_id"
-    "0resource0deleted"
+class DomainQuota(BASE, NovaBase):
+    """Represents a single quota override for a domain."""
+
+    __tablename__ = 'domain_quotas'
+    uniq_name = "uniq_domain_quotas0domain_id0resource0deleted"
     __table_args__ = (
-        schema.UniqueConstraint("domain_id", "user_id", "project_id",
-                            "resource", "deleted", name=uniq_name),
-        Index('project_user_quotas_project_id_deleted_idx',
-              'project_id', 'deleted'),
-        Index('project_user_quotas_user_id_deleted_idx',
-              'user_id', 'deleted')
+        schema.UniqueConstraint("domain_id", "resource",
+                                "deleted", name=uniq_name),
+        Index('domain_quotas_domain_id_deleted_idx',
+              'domain_id', 'deleted'),
+
     )
+    id = Column(Integer, primary_key=True, nullable=False)
+
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)
+    deleted_at = Column(DateTime)
+    deleted = Column(Integer)
+
+    domain_id = Column(String(255), nullable=False)
+
+    resource = Column(String(255), nullable=False)
+    hard_limit = Column(Integer)
 
 
 class QuotaClass(BASE, NovaBase):
@@ -504,6 +514,33 @@ class QuotaUsage(BASE, NovaBase):
     until_refresh = Column(Integer)
 
 
+class DomainQuotaUsage(BASE, NovaBase):
+    """Represents the current usage for a given resource."""
+
+    __tablename__ = 'domain_quota_usages'
+    __table_args__ = (
+        Index('ix_domain_quota_usages_domain_id', 'domain_id'),
+    )
+    id = Column(Integer, primary_key=True)
+
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)
+    deleted_at = Column(DateTime)
+    deleted = Column(Integer)
+
+    domain_id = Column(String(255))
+    resource = Column(String(255), nullable=False)
+
+    in_use = Column(Integer, nullable=False)
+    reserved = Column(Integer, nullable=False)
+
+    @property
+    def total(self):
+        return self.in_use + self.reserved
+
+    until_refresh = Column(Integer)
+
+
 class Reservation(BASE, NovaBase):
     """Represents a resource reservation for quotas."""
 
@@ -530,6 +567,38 @@ class Reservation(BASE, NovaBase):
         foreign_keys=usage_id,
         primaryjoin='and_(Reservation.usage_id == QuotaUsage.id,'
                          'QuotaUsage.deleted == 0)')
+
+
+class DomainReservation(BASE, NovaBase):
+    """Represents a resource reservation for quotas."""
+
+    __tablename__ = 'domain_reservations'
+    __table_args__ = (
+        Index('ix_domain_domain_id', 'domain_id'),
+        Index('domain_reservations_uuid_idx', 'uuid'),
+    )
+    id = Column(Integer, primary_key=True, nullable=False)
+
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)
+    deleted_at = Column(DateTime)
+    deleted = Column(Integer)
+
+    uuid = Column(String(36), nullable=False)
+    usage_id = Column(Integer, ForeignKey('domain_quota_usages.id'),
+                      nullable=False)
+
+    domain_id = Column(String(255))
+    resource = Column(String(255))
+
+    delta = Column(Integer, nullable=False)
+    expire = Column(DateTime)
+
+    usage = relationship(
+        "DomainQuotaUsage",
+        foreign_keys=usage_id,
+        primaryjoin='and_(DomainReservation.usage_id == DomainQuotaUsage.id,'
+                         'DomainQuotaUsage.deleted == 0)')
 
 
 class Snapshot(BASE, NovaBase):
@@ -1424,4 +1493,3 @@ class PciDevice(BASE, NovaBase):
                             primaryjoin='and_('
                             'PciDevice.instance_uuid == Instance.uuid,'
                             'PciDevice.deleted == 0)')
-

@@ -3203,7 +3203,6 @@ def _domain_quota_usage_get_all(context, domain_id, user_id=None):
     nova.context.authorize_domain_context(context, domain_id)
     query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
                    filter_by(domain_id=domain_id)
-
     result = {'domain_id': domain_id}
     rows = query.all()
     for row in rows:
@@ -3229,6 +3228,7 @@ def quota_usage_get_all_by_project(context, project_id):
 @require_context
 def domain_quota_usage_get_all(context, domain_id):
     return _domain_quota_usage_get_all(context, domain_id)
+
 
 def quota_usage_get_all_by_domain(context, domain_id):
     nova.context.authorize_domain_context(context, domain_id)
@@ -3264,6 +3264,22 @@ def _quota_usage_create(context, project_id, user_id, resource, in_use,
     # updated_at is needed for judgement of max_age
     quota_usage_ref.updated_at = timeutils.utcnow()
     quota_usage_ref.created_at = timeutils.utcnow()
+
+    quota_usage_ref.save(session=session)
+
+    return quota_usage_ref
+
+
+def _domain_quota_usage_create(context, domain_id, resource, in_use,
+                        reserved, until_refresh, session=None):
+    quota_usage_ref = models.DomainQuotaUsage()
+    quota_usage_ref.domain_id = domain_id
+    quota_usage_ref.resource = resource
+    quota_usage_ref.in_use = in_use
+    quota_usage_ref.reserved = reserved
+    quota_usage_ref.until_refresh = until_refresh
+    # updated_at is needed for judgement of max_age
+    quota_usage_ref.updated_at = timeutils.utcnow()
 
     quota_usage_ref.save(session=session)
 
@@ -3395,6 +3411,19 @@ def _domain_reservation_create(context, uuid, usage, domain_id, resource,
     reservation_ref.created_at = timeutils.utcnow()
     reservation_ref.save(session=session)
 
+    return reservation_ref
+
+
+def _domain_reservation_create(context, uuid, usage, domain_id, resource,
+                        delta, expire, session=None):
+    reservation_ref = models.DomainReservation()
+    reservation_ref.uuid = uuid
+    reservation_ref.usage_id = usage['id']
+    reservation_ref.domain_id = domain_id
+    reservation_ref.resource = resource
+    reservation_ref.delta = delta
+    reservation_ref.expire = expire
+    reservation_ref.save(session=session)
     return reservation_ref
 
 

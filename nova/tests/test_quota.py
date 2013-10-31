@@ -679,6 +679,7 @@ class QuotaEngineTestCase(test.TestCase):
 
     def test_reserve(self):
         context = FakeContext(None, None)
+
         driver = FakeDriver(reservations=[
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
@@ -722,6 +723,8 @@ class QuotaEngineTestCase(test.TestCase):
         self.assertEqual(result3, [
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
+
+        self.assertTrue(False)
 
     def test_commit(self):
         context = FakeContext(None, None)

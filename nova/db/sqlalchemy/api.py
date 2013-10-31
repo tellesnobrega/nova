@@ -2935,6 +2935,21 @@ def quota_get_all_by_project_and_user(context, project_id, user_id):
 
 
 @require_context
+def quota_get_all_by_domain(context, domain_id):
+    nova.context.authorize_project_context(context, project_id)
+
+    rows = model_query(context, models.DomainQuota, read_deleted="no").\
+                   filter_by(domain_id=domain_id).\
+                   all()
+
+    result = {'domain_id': domain_id}
+    for row in rows:
+        result[row.resource] = row.hard_limit
+
+    return result
+
+
+@require_context
 def quota_get_all_by_project(context, project_id):
     nova.context.authorize_project_context(context, project_id)
 
@@ -3200,6 +3215,26 @@ def quota_usage_get_all_by_project(context, project_id):
 def domain_quota_usage_get_all(context, domain_id):
     return _domain_quota_usage_get_all(context, domain_id)
 
+def quota_usage_get_all_by_domain(context, domain_id):
+    nova.context.authorize_domain_context(context, project_id)
+    query = model_query(context, models.QuotaUsage, read_deleted="no").\
+                   filter_by(project_id=project_id)
+    result = {'project_id': project_id}
+    if user_id:
+        query = query.filter(or_(models.QuotaUsage.user_id == user_id,
+                                 models.QuotaUsage.user_id == None))
+        result['user_id'] = user_id
+
+    rows = query.all()
+    for row in rows:
+        if row.resource in result:
+            result[row.resource]['in_use'] += row.in_use
+            result[row.resource]['reserved'] += row.reserved
+        else:
+            result[row.resource] = dict(in_use=row.in_use,
+                                        reserved=row.reserved)
+
+    return result
 
 def _quota_usage_create(context, project_id, user_id, resource, in_use,
                         reserved, until_refresh, session=None):

@@ -36,8 +36,6 @@ class TestNoAuthMiddlewareV3(test.NoDBTestCase):
         req.headers['X-Auth-Key'] = 'user1_key'
         req.headers['X-Auth-Project-Id'] = 'user1_project'
         result = req.get_response(fakes.wsgi_app_v3(use_no_auth=True))
-
-        print vars(result)
         self.assertEqual(result.status, '204 No Content')
         self.assertEqual(result.headers['X-Server-Management-Url'],
             "http://localhost/v3")

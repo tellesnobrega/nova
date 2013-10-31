@@ -18,6 +18,7 @@
 
 import datetime
 
+from keystoneclient.v3 import client as ksclient
 from oslo.config import cfg
 from oslo.utils import importutils
 from oslo.utils import timeutils
@@ -284,7 +285,7 @@ class DbQuotaDriver(object):
             context, project_id)
         project_usages = None
         if usages:
-            project_usages = db.quota_usage_get_all_by_project(context,
+            domain_usages = db.quota_usage_get_all_by_project(context,
                                                                project_id)
         return self._process_quotas(context, resources, project_id,
                                     project_quotas, quota_class,
@@ -1541,8 +1542,7 @@ class DomainQuotaDriver(object):
             quotas[resource.name] = -1
         return quotas
 
-    def _get_quotas(self, context, resources, keys, has_sync, project_id=None,
-                    user_id=None):
+    def _get_quotas(self, context, resources, keys, has_sync, domain_id):
         """
         A helper method which retrieves the quotas for the specific
         resources identified by keys, and which apply to the current
@@ -1555,12 +1555,9 @@ class DomainQuotaDriver(object):
                          have a sync function; if False, indicates
                          that the resource must NOT have a sync
                          function.
-        :param project_id: Specify the project_id if current context
+        :param domain_id: Specify the domain_id if current context
                            is admin and admin wants to impact on
                            common user's tenant.
-        :param user_id: Specify the user_id if current context
-                        is admin and admin wants to impact on
-                        common user.
         """
 
         # Filter resources
@@ -1576,6 +1573,7 @@ class DomainQuotaDriver(object):
             unknown = desired - set(sub_resources.keys())
             raise exception.QuotaResourceUnknown(unknown=sorted(unknown))
 
+<<<<<<< HEAD
         # Grab and return the domain quotas (without usages)
         domain_quotas = self.get_project_quotas(context, sub_resources,
                                              project_id,
@@ -1583,6 +1581,49 @@ class DomainQuotaDriver(object):
                                              usages=False)
 
         return dict((k, v['limit']) for k, v in domain_quotas.items())
+=======
+        # Grab and return the quotas (without usages)
+        quotas = self.get_domain_quotas(context, sub_resources,
+                                        domain_id,
+                                        context.quota_class, usages=False)
+
+        return dict((k, v['limit']) for k, v in quotas.items())
+
+    def get_domain_quotas(self, context, resources, domain_id,
+                           quota_class=None, defaults=True,
+                           usages=True, remains=False):
+        """
+        Given a list of resources, retrieve the quotas for the given
+        domain.
+
+        :param context: The request context, for access checks.
+        :param resources: A dictionary of the registered resources.
+        :param domain_id: The ID of the domain to return quotas for.
+        :param quota_class: If domain_id != context.domain_id, the
+                            quota class cannot be determined.  This
+                            parameter allows it to be specified.  It
+                            will be ignored if domain_id ==
+                            context.domain_id.
+        :param defaults: If True, the quota class value (or the
+                         default value, if there is no value from the
+                         quota class) will be reported if there is no
+                         specific value for the resource.
+        :param usages: If True, the current in_use and reserved counts
+                       will also be returned.
+        :param remains: If True, the current remains of the domain will
+                        will be returned.
+        """
+
+        project_quotas = db.quota_get_all_by_domain(context, domain_id)
+        project_usages = None
+        if usages:
+            project_usages = db.quota_usage_get_all_by_project(context,
+                                                               project_id)
+        return self._process_quotas(context, resources, project_id,
+                                    project_quotas, quota_class,
+                                    defaults=defaults, usages=project_usages,
+                                    remains=remains)
+>>>>>>> US 16
 
     def get_project_quotas(self, context, resources, project_id,
                            quota_class=None, defaults=True,
@@ -1745,7 +1786,48 @@ class DomainQuotaDriver(object):
                         is admin and admin wants to impact on
                         common user.
         """
-        return []
+        # Set up the reservation expiration
+        if expire is None:
+            expire = CONF.reservation_expire
+        if isinstance(expire, (int, long)):
+            expire = datetime.timedelta(seconds=expire)
+        if isinstance(expire, datetime.timedelta):
+            expire = timeutils.utcnow() + expire
+        if not isinstance(expire, datetime.datetime):
+            raise exception.InvalidReservationExpiration(expire=expire)
+
+        # endpoint = "http://keystone:35357/v2.0"
+        # admin_token = context.auth_token
+
+        # keystone = ksclient.Client(endpoint=endpoint, token=admin_token)
+        # domain_id = v3_keystoneclient_instance.projects.get(project_id).domain_id
+        # tenants = keystone.tenants.list()
+        # TODO
+
+        domain_id = context.domain_id
+        # If project_id is None, then we use the project_id in context
+        if project_id is None:
+            project_id = context.project_id
+        # If user_id is None, then we use the project_id in context
+        if user_id is None:
+            user_id = context.user_id
+
+        # Get the applicable quotas.
+        # NOTE(Vek): We're not worried about races at this point.
+        #            Yes, the admin may be in the process of reducing
+        #            quotas, but that's a pretty rare thing.
+        quotas = self._get_quotas(context, resources, deltas.keys(),
+                                  has_sync=True, domain_id=domain_id)
+
+        # NOTE(Vek): Most of the work here has to be done in the DB
+        #            API, because we have to do it in a transaction,
+        #            which means access to the session.  Since the
+        #            session isn't available outside the DBAPI, we
+        #            have to do the work there.
+        return db.quota_reserve(context, resources, quotas, user_quotas,
+                                deltas, expire,
+                                CONF.until_refresh, CONF.max_age,
+                                project_id=project_id, user_id=user_id)
 
     def commit(self, context, reservations, project_id=None, user_id=None):
         """Commit reservations.

@@ -3229,6 +3229,26 @@ def quota_usage_get_all_by_project(context, project_id):
 def domain_quota_usage_get_all(context, domain_id):
     return _domain_quota_usage_get_all(context, domain_id)
 
+def quota_usage_get_all_by_domain(context, domain_id):
+    nova.context.authorize_domain_context(context, project_id)
+    query = model_query(context, models.QuotaUsage, read_deleted="no").\
+                   filter_by(project_id=project_id)
+    result = {'project_id': project_id}
+    if user_id:
+        query = query.filter(or_(models.QuotaUsage.user_id == user_id,
+                                 models.QuotaUsage.user_id == None))
+        result['user_id'] = user_id
+
+    rows = query.all()
+    for row in rows:
+        if row.resource in result:
+            result[row.resource]['in_use'] += row.in_use
+            result[row.resource]['reserved'] += row.reserved
+        else:
+            result[row.resource] = dict(in_use=row.in_use,
+                                        reserved=row.reserved)
+
+    return result
 
 def quota_usage_get_all_by_domain(context, domain_id):
     nova.context.authorize_domain_context(context, domain_id)

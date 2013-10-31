@@ -56,6 +56,10 @@ class RequestContext(object):
 
         :param kwargs: Extra arguments that might be present, but we ignore
             because they possibly came in from older rpc messages.
+            copy of the index is not overwritten.
+
+        :param kwargs: Extra arguments that might be present, but we ignore
+            because they possibly came in from older rpc messages.
         """
         if kwargs:
             LOG.warn(_('Arguments dropped when creating context: %s') %
@@ -120,7 +124,7 @@ class RequestContext(object):
     def to_dict(self):
         return {'user_id': self.user_id,
                 'project_id': self.project_id,
-                'domain_id': self.domain_id,
+                'domain_id' : self.domain_id,
                 'is_admin': self.is_admin,
                 'read_deleted': self.read_deleted,
                 'roles': self.roles,
@@ -240,6 +244,15 @@ def authorize_quota_class_context(context, class_name):
 
 
 def authorize_domain_context(context, domain_id):
+    """Ensures a request has permission to access the given domain."""
+    if is_user_context(context):
+        if not context.domain_id:
+            raise exception.Forbidden()
+        elif context.domain_id != domain_id:
+            raise exception.Forbidden()
+
+
+def authoriza_domain_context(context, domain_id):
     """Ensures a request has permission to access the given domain."""
     if is_user_context(context):
         if not context.domain_id:

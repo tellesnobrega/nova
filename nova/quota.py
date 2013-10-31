@@ -669,6 +669,7 @@ class DomainQuotaDriver(object):
 
     def get_by_project(self, context, project_id, resource):
         """Get a specific quota by project."""
+        ##domain_id?
         return -1
 
     def get_by_class(self, context, quota_class, resource):
@@ -682,8 +683,11 @@ class DomainQuotaDriver(object):
         :param resources: A dictionary of the registered resources.
         """
         quotas = {}
+        default_quotas = db.quota_domain_get_default(context)
         for resource in resources.values():
-            quotas[resource.name] = -1
+            quotas[resource.name] = default_quotas.get(resource.name,
+                                                       resource.default)
+
         return quotas
 
     def get_class_quotas(self, context, resources, quota_class,
@@ -763,25 +767,18 @@ class DomainQuotaDriver(object):
         desired = set(keys)
         sub_resources = dict((k, v) for k, v in resources.items()
                              if k in desired and sync_filt(v))
-
         # Make sure we accounted for all of them...
         if len(keys) != len(sub_resources):
             unknown = desired - set(sub_resources.keys())
             raise exception.QuotaResourceUnknown(unknown=sorted(unknown))
 
-        if user_id:
-            # Grab and return the quotas (without usages)
-            quotas = self.get_user_quotas(context, sub_resources,
-                                          project_id, user_id,
-                                          context.quota_class, usages=False)
-        else:
-            # Grab and return the quotas (without usages)
-            quotas = self.get_project_quotas(context, sub_resources,
+        # Grab and return the domain quotas (without usages)
+        domain_quotas = self.get_project_quotas(context, sub_resources,
                                              project_id,
                                              context.quota_class,
                                              usages=False)
 
-        return dict((k, v['limit']) for k, v in quotas.items())
+        return dict((k, v['limit']) for k, v in domain_quotas.items())
 
     def get_project_quotas(self, context, resources, project_id,
                            quota_class=None, defaults=True,
@@ -828,6 +825,26 @@ class DomainQuotaDriver(object):
             quotas[resource.name].update(minimum=0, maximum=-1)
         return quotas
 
+    def limit_check_absolute(self, context, resources, values, project_id=None,
+                    user_id=None):
+        unders = [key for key, val in values.items() if val < 0]
+        if unders:
+            raise exception.InvalidQuotaValue(unders=sorted(unders))
+        # If project_id is None, then we use the project_id in context
+        if project_id is None:
+            project_id = context.project_id
+        # If user id is None, then we use the user_id in context
+        if user_id is None:
+            user_id = context.user_id
+
+        quotas = self._get_quotas(context, resources, values.keys(),
+                                  has_sync=False, project_id=project_id)
+        overs = [key for key, val in values.items()
+                 if (quotas[key] >= 0 and quotas[key] < val)]
+        if overs:
+            raise exception.OverQuota(overs=sorted(overs), quotas=quotas,
+                                      usages={})
+
     def limit_check(self, context, resources, values, project_id=None,
                     user_id=None):
         """Check simple quota limits.
@@ -856,7 +873,35 @@ class DomainQuotaDriver(object):
                         is admin and admin wants to impact on
                         common user.
         """
-        pass
+
+        # Ensure no value is less than zero
+        unders = [key for key, val in values.items() if val < 0]
+        if unders:
+            raise exception.InvalidQuotaValue(unders=sorted(unders))
+
+        # If project_id is None, then we use the project_id in context
+        if project_id is None:
+            project_id = context.project_id
+        # If user id is None, then we use the user_id in context
+        if user_id is None:
+            user_id = context.user_id
+
+        # Get the applicable quotas
+        quotas = self._get_quotas(context, resources, values.keys(),
+                                  has_sync=False, project_id=project_id)
+
+        user_quotas = self._get_quotas(context, resources, values.keys(),
+                                       has_sync=False, project_id=project_id,
+                                       user_id=user_id)
+
+        # Check the quotas and construct a list of the resources that
+        # would be put over limit by the desired values
+        overs = [key for key, val in values.items()
+                 if (quotas[key] >= 0 and quotas[key] < val) or
+                 (user_quotas[key] >= 0 and user_quotas[key] < val)]
+        if overs:
+            raise exception.OverQuota(overs=sorted(overs), quotas=quotas,
+                                      usages={})
 
     def reserve(self, context, resources, deltas, expire=None,
                 project_id=None, user_id=None):
@@ -1744,32 +1789,11 @@ class QuotaEngine(object):
         for resource in resources:
             self.register_resource(resource)
 
-    def get_by_domain_project_and_user(self, context, domain_id, project_id,
-                                       user_id, resource):
-        """Get a specific quota by domain, project and user."""
-
-        return self._driver.get_by_domain_project_and_user(context, domain_id,
-                                                           project_id, user_id,
-                                                           resource)
-
-    def get_by_domain_and_project(self, context, domain_id, project_id,
-                                  resource):
-        """Get a specific quota by domain and project."""
-
-        return self._driver.get_by_domain_and_project(context, domain_id,
-                                                      project_id, resource)
-
     def get_by_project_and_user(self, context, project_id, user_id, resource):
         """Get a specific quota by project and user."""
 
         return self._driver.get_by_project_and_user(context, project_id,
                                                     user_id, resource)
-
-    def get_by_domain(self, context, domain_id, resource):
-        """Get a specific quota by domain."""
-
-        return self._driver.get_by_domain(context, domain_id,
-                                          resource)
 
     def get_by_project(self, context, project_id, resource):
         """Get a specific quota by project."""
@@ -1848,32 +1872,6 @@ class QuotaEngine(object):
 
         return self._driver.get_project_quotas(context, self._resources,
                                               project_id,
-                                              quota_class=quota_class,
-                                              defaults=defaults,
-                                              usages=usages,
-                                              remains=remains)
-
-    def get_domain_quotas(self, context, domain_id, quota_class=None,
-                          defaults=None, usages=None, remains=None):
-        """Retrieve the quotas for the given domain.
-
-        :param context: The request context, for access checks.
-        :param domain_id: The ID of the domain to return quotas for.
-        :param quota_class: If domain_id != context.domain_id, the
-                            quota class cannot be determined.  This
-                            parameter allows it to be specified.
-        :param defaults: If True, the quota class value (or the
-                         default value, if there is no value from the
-                         quota class) will be reported if there is no
-                         specific value for the resource.
-        :param usages: If True, the current in_use and reserved counts
-                       will also be returned.
-        :param remains: If True, the current remains of the domain will
-                        will be returned.
-        """
-
-        return self._driver.get_domain_quotas(context, self._resources,
-                                              domain_id,
                                               quota_class=quota_class,
                                               defaults=defaults,
                                               usages=usages,

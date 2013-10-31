@@ -520,7 +520,6 @@ class BaseWalkMigrationTestCase(BaseMigrationTestCase):
                 if pre_upgrade:
                     data = pre_upgrade(engine)
 
-
             self.migration_api.upgrade(engine, self.REPOSITORY, version)
             self.assertEqual(version,
                              self.migration_api.db_version(engine,

@@ -2904,6 +2904,19 @@ def quota_get(context, project_id, resource, user_id=None):
 
 
 @require_context
+def domain_quota_get(context, domain_id, resource, user_id=None):
+    model = models.DomainQuota
+    query = model_query(context, model).\
+                    filter_by(domain_id=domain_id).\
+                    filter_by(resource=resource)
+    result = query.first()
+    if not result:
+        raise exception.DomainQuotaNotFound(domain_id=domain_id)
+
+    return result
+
+
+@require_context
 def quota_get_all_by_project_and_user(context, project_id, user_id):
     nova.context.authorize_project_context(context, project_id)
 
@@ -2947,6 +2960,17 @@ def quota_get_all(context, project_id):
     return result
 
 
+@require_context
+def domain_quota_get_all(context, domain_id):
+    nova.context.authorize_domain_context(context, domain_id)
+
+    result = model_query(context, models.DomainQuota).\
+                   filter_by(domain_id=domain_id).\
+                   all()
+
+    return result
+
+
 @require_admin_context
 def quota_create(context, project_id, resource, limit, user_id=None):
     per_user = user_id and resource not in PER_PROJECT_QUOTAS
@@ -2960,6 +2984,20 @@ def quota_create(context, project_id, resource, limit, user_id=None):
         quota_ref.save()
     except db_exc.DBDuplicateEntry:
         raise exception.QuotaExists(project_id=project_id, resource=resource)
+    return quota_ref
+
+
+@require_admin_context
+def domain_quota_create(context, domain_id, resource, limit, user_id=None):
+    quota_ref = models.DomainQuota()
+    quota_ref.domain_id = domain_id
+    quota_ref.resource = resource
+    quota_ref.hard_limit = limit
+    try:
+        quota_ref.save()
+    except db_exc.DBDuplicateEntry:
+        raise exception.DomainQuotaExists(domain_id=domain_id,
+                                          resource=resource)
     return quota_ref
 
 
@@ -2982,6 +3020,16 @@ def quota_update(context, project_id, resource, limit, user_id=None):
             raise exception.ProjectQuotaNotFound(project_id=project_id)
 
 
+@require_admin_context
+def domain_quota_update(context, domain_id, resource, limit, user_id=None):
+    model = models.DomainQuota
+    query = model_query(context, model).\
+                filter_by(domain_id=domain_id).\
+                filter_by(resource=resource)
+    result = query.update({'hard_limit': limit})
+    if not result:
+        raise exception.DomainQuotaNotFound(domain_id=domain_id)
+
 ###################
 
 
@@ -2999,6 +3047,18 @@ def quota_class_get(context, class_name, resource):
 
 
 def quota_class_get_default(context):
+    rows = model_query(context, models.QuotaClass, read_deleted="no").\
+                   filter_by(class_name=_DEFAULT_QUOTA_NAME).\
+                   all()
+
+    result = {'class_name': _DEFAULT_QUOTA_NAME}
+    for row in rows:
+        result[row.resource] = row.hard_limit
+
+    return result
+
+
+def quota_domain_get_default(context):
     rows = model_query(context, models.QuotaClass, read_deleted="no").\
                    filter_by(class_name=_DEFAULT_QUOTA_NAME).\
                    all()
@@ -3068,6 +3128,25 @@ def quota_usage_get(context, project_id, resource, user_id=None):
     return result
 
 
+@require_context
+def domain_quota_usage_get(context, domain_id, resource, user_id=None):
+    query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
+                     filter_by(domain_id=domain_id).\
+                     filter_by(resource=resource)
+    if user_id:
+        if resource not in PER_PROJECT_QUOTAS:
+            result = query.filter_by(user_id=user_id).first()
+        else:
+            result = query.filter_by(user_id=None).first()
+    else:
+        result = query.first()
+
+    if not result:
+        raise exception.QuotaUsageNotFound(domain_id=domain_id)
+
+    return result
+
+
 def _quota_usage_get_all(context, project_id, user_id=None):
     nova.context.authorize_project_context(context, project_id)
     query = model_query(context, models.QuotaUsage, read_deleted="no").\
@@ -3090,6 +3169,23 @@ def _quota_usage_get_all(context, project_id, user_id=None):
     return result
 
 
+def _domain_quota_usage_get_all(context, domain_id, user_id=None):
+    nova.context.authorize_domain_context(context, domain_id)
+    query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
+                   filter_by(domain_id=domain_id)
+    result = {'domain_id': domain_id}
+    rows = query.all()
+    for row in rows:
+        if row.resource in result:
+            result[row.resource]['in_use'] += row.in_use
+            result[row.resource]['reserved'] += row.reserved
+        else:
+            result[row.resource] = dict(in_use=row.in_use,
+                                        reserved=row.reserved)
+
+    return result
+
+
 @require_context
 def quota_usage_get_all_by_project_and_user(context, project_id, user_id):
     return _quota_usage_get_all(context, project_id, user_id=user_id)
@@ -3100,11 +3196,32 @@ def quota_usage_get_all_by_project(context, project_id):
     return _quota_usage_get_all(context, project_id)
 
 
-def _quota_usage_create(project_id, user_id, resource, in_use,
+@require_context
+def domain_quota_usage_get_all(context, domain_id):
+    return _domain_quota_usage_get_all(context, domain_id)
+
+
+def _quota_usage_create(context, project_id, user_id, resource, in_use,
                         reserved, until_refresh, session=None):
     quota_usage_ref = models.QuotaUsage()
     quota_usage_ref.project_id = project_id
     quota_usage_ref.user_id = user_id
+    quota_usage_ref.resource = resource
+    quota_usage_ref.in_use = in_use
+    quota_usage_ref.reserved = reserved
+    quota_usage_ref.until_refresh = until_refresh
+    # updated_at is needed for judgement of max_age
+    quota_usage_ref.updated_at = timeutils.utcnow()
+
+    quota_usage_ref.save(session=session)
+
+    return quota_usage_ref
+
+
+def _domain_quota_usage_create(context, domain_id, resource, in_use,
+                        reserved, until_refresh, session=None):
+    quota_usage_ref = models.DomainQuotaUsage()
+    quota_usage_ref.domain_id = domain_id
     quota_usage_ref.resource = resource
     quota_usage_ref.in_use = in_use
     quota_usage_ref.reserved = reserved
@@ -3136,16 +3253,85 @@ def quota_usage_update(context, project_id, user_id, resource, **kwargs):
         raise exception.QuotaUsageNotFound(project_id=project_id)
 
 
+@require_admin_context
+def domain_quota_usage_update(context, domain_id, resource, **kwargs):
+    updates = {}
+
+    for key in ['in_use', 'reserved', 'until_refresh']:
+        if key in kwargs:
+            updates[key] = kwargs[key]
+
+    result = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
+                     filter_by(domain_id=domain_id).\
+                     filter_by(resource=resource).\
+                     update(updates)
+
+    if not result:
+        raise exception.DomainQuotaUsageNotFound(domain_id=domain_id)
+
+
 ###################
 
 
-def _reservation_create(uuid, usage, project_id, user_id, resource,
+@require_context
+def reservation_get(context, uuid):
+    result = model_query(context, models.Reservation, read_deleted="no").\
+                     filter_by(uuid=uuid).\
+                     first()
+
+    if not result:
+        raise exception.ReservationNotFound(uuid=uuid)
+
+    return result
+
+
+@require_context
+def domain_reservation_get(context, uuid):
+    result = model_query(context, models.DomainReservation,
+                         read_deleted="no").\
+                     filter_by(uuid=uuid).\
+                     first()
+
+    if not result:
+        raise exception.ReservationNotFound(uuid=uuid)
+
+    return result
+
+
+@require_admin_context
+def reservation_create(context, uuid, usage, project_id, user_id, resource,
+                       delta, expire):
+    return _reservation_create(context, uuid, usage, project_id, user_id,
+                               resource, delta, expire)
+
+
+@require_admin_context
+def domain_reservation_create(context, uuid, usage, domain_id, resource,
+                       delta, expire):
+    return _domain_reservation_create(context, uuid, usage, domain_id,
+                               resource, delta, expire)
+
+
+def _reservation_create(context, uuid, usage, project_id, user_id, resource,
                         delta, expire, session=None):
     reservation_ref = models.Reservation()
     reservation_ref.uuid = uuid
     reservation_ref.usage_id = usage['id']
     reservation_ref.project_id = project_id
     reservation_ref.user_id = user_id
+    reservation_ref.resource = resource
+    reservation_ref.delta = delta
+    reservation_ref.expire = expire
+    reservation_ref.save(session=session)
+    return reservation_ref
+
+
+def _domain_reservation_create(context, uuid, usage, domain_id, resource,
+                        delta, expire, session=None):
+    reservation_ref = models.DomainReservation()
+    reservation_ref.uuid = uuid
+    reservation_ref.usage_id = usage['id']
+    reservation_ref.domain_id = domain_id
     reservation_ref.resource = resource
     reservation_ref.delta = delta
     reservation_ref.expire = expire

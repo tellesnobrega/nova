@@ -208,6 +208,15 @@ def authorize_project_context(context, project_id):
             raise exception.Forbidden()
 
 
+def authorize_domain_context(context, domain_id):
+    """Ensures a request has permission to access the given project."""
+    if is_user_context(context):
+        if not context.domain_id:
+            raise exception.NotAuthorized()
+        elif context.domain_id != domain_id:
+            raise exception.NotAuthorized()
+
+
 def authorize_user_context(context, user_id):
     """Ensures a request has permission to access the given user."""
     if is_user_context(context):

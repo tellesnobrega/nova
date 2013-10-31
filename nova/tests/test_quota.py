@@ -799,10 +799,26 @@ class DomainQuotaDriverTestCase(test.TestCase):
 
     def setUp(self):
         super(DomainQuotaDriverTestCase, self).setUp()
+
+        self.flags(quota_instances=-1,
+                   quota_cores=-1,
+                   quota_ram=-1,
+                   quota_floating_ips=-1,
+                   quota_fixed_ips=-1,
+                   quota_metadata_items=-1,
+                   quota_injected_files=-1,
+                   quota_injected_file_content_bytes=-1,
+                   quota_injected_file_path_bytes=-1,
+                   quota_security_groups=-1,
+                   quota_security_group_rules=-1,
+                   reservation_expire=-1,
+                   until_refresh=0,
+                   max_age=0,
+                   )
+
         self.driver = quota.DbQuotaDriver()
         self.driverDomain = quota.DomainQuotaDriver()
         self.calls = []
-
         self.useFixture(test.TimeOverride())
 
     def test_get_defaults(self):
@@ -836,6 +852,48 @@ class DomainQuotaDriverTestCase(test.TestCase):
                 injected_file_content_bytes=-1,
                 )
         self.stubs.Set(db, 'quota_class_get_default', fake_qcgd)
+
+    def _stub_get_project_quotas(self):
+        def fake_get_project_quotas(context, resources, project_id,
+                                    quota_class=None, defaults=True,
+                                    usages=True, remains=False):
+            self.calls.append('get_project_quotas')
+            return dict((k, dict(limit=v.default))
+                        for k, v in resources.items())
+
+        self.stubs.Set(self.driverDomain, 'get_project_quotas',
+                       fake_get_project_quotas)
+
+    def test_limit_check(self):
+        self._stub_get_project_quotas()
+        self.driverDomain.limit_check_absolute
+        (FakeContext('test_project', 'test_class'),
+                                quota.QUOTAS._resources,
+                                dict(key_pairs=10))
+
+    def test_limit_check_under(self):
+        self._stub_get_project_quotas()
+        self.assertRaises(exception.InvalidQuotaValue,
+                          self.driverDomain.limit_check_absolute,
+                          FakeContext('test_project', 'test_class'),
+                          quota.QUOTAS._resources,
+                          dict(metadata_items=-1))
+
+    def test_limit_check_over(self):
+        self._stub_get_project_quotas()
+        self.assertRaises(exception.OverQuota,
+                          self.driverDomain.limit_check_absolute,
+                          FakeContext('test_project', 'test_class'),
+                          quota.QUOTAS._resources,
+                          dict(key_pairs=101))
+
+    def test_limit_check_unlimited(self):
+        self.flags(quota_metadata_items=-1)
+        self._stub_get_project_quotas()
+        self.driverDomain.limit_check_absolute(
+                FakeContext('test_project', 'test_class'),
+                                quota.QUOTAS._resources,
+                                dict(metadata_items=32767))
 
 
 class DbQuotaDriverTestCase(test.TestCase):

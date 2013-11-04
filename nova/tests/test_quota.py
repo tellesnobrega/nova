@@ -233,6 +233,7 @@ class FakeContext(object):
         self.is_admin = False
         self.user_id = 'fake_user'
         self.project_id = project_id
+        self.domain_id = 'fake_domain'
         self.quota_class = quota_class
         self.read_deleted = 'no'
 
@@ -723,8 +724,6 @@ class QuotaEngineTestCase(test.TestCase):
         self.assertEqual(result3, [
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
-
-        self.assertTrue(False)
 
     def test_commit(self):
         context = FakeContext(None, None)

@@ -346,7 +346,6 @@ QUOTA_SYNC_FUNCTIONS = {
     '_sync_security_groups': _sync_security_groups,
     '_sync_server_groups': _sync_server_groups,
 }
-
 ###################
 
 
@@ -1662,6 +1661,22 @@ def instance_create(context, values):
 
 
 def _instance_data_get_for_user(context, project_id, user_id, session=None):
+    result = model_query(context,
+                         func.count(models.Instance.id),
+                         func.sum(models.Instance.vcpus),
+                         func.sum(models.Instance.memory_mb),
+                         base_model=models.Instance,
+                         session=session).\
+                     filter_by(project_id=project_id)
+    if user_id:
+        result = result.filter_by(user_id=user_id).first()
+    else:
+        result = result.first()
+    # NOTE(vish): convert None to 0
+    return (result[0] or 0, result[1] or 0, result[2] or 0)
+
+
+def _instance_data_get_for_domain(context, domain_id, session=None):
     result = model_query(context,
                          func.count(models.Instance.id),
                          func.sum(models.Instance.vcpus),
@@ -3216,14 +3231,10 @@ def domain_quota_usage_get_all(context, domain_id):
     return _domain_quota_usage_get_all(context, domain_id)
 
 def quota_usage_get_all_by_domain(context, domain_id):
-    nova.context.authorize_domain_context(context, project_id)
-    query = model_query(context, models.QuotaUsage, read_deleted="no").\
-                   filter_by(project_id=project_id)
-    result = {'project_id': project_id}
-    if user_id:
-        query = query.filter(or_(models.QuotaUsage.user_id == user_id,
-                                 models.QuotaUsage.user_id == None))
-        result['user_id'] = user_id
+    nova.context.authorize_domain_context(context, domain_id)
+    query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
+                   filter_by(domain_id=domain_id)
+    result = {'domain_id': domain_id}
 
     rows = query.all()
     for row in rows:
@@ -3235,6 +3246,11 @@ def quota_usage_get_all_by_domain(context, domain_id):
                                         reserved=row.reserved)
 
     return result
+
+
+def domain_quota_usage_get_all(context, domain_id):
+    return _domain_quota_usage_get_all(context, domain_id)
+
 
 def _quota_usage_create(context, project_id, user_id, resource, in_use,
                         reserved, until_refresh, session=None):
@@ -3558,6 +3574,27 @@ def _calculate_overquota(project_quotas, user_quotas, deltas,
     return overs
 
 
+def _get_domain_quota_usages(context, session, domain_id):
+    rows = model_query(context, models.DomainQuotaUsage,
+                       read_deleted="no",
+                       session=session).\
+                   filter_by(domain_id=domain_id).\
+                   with_lockmode('update').\
+                   all()
+    result = dict()
+    # Get the total count of in_use,reserved
+    for row in rows:
+        if row.resource in result:
+            result[row.resource]['in_use'] += row.in_use
+            result[row.resource]['reserved'] += row.reserved
+            result[row.resource]['total'] += (row.in_use + row.reserved)
+        else:
+            result[row.resource] = dict(in_use=row.in_use,
+                                        reserved=row.reserved,
+                                        total=row.in_use + row.reserved)
+    return result
+
+
 @require_context
 @_retry_on_deadlock
 def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
@@ -3694,6 +3731,179 @@ def _quota_reservations_query(session, context, reservations):
 
 @require_context
 @_retry_on_deadlock
+def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
+                         until_refresh, max_age, domain_id=None):
+    elevated = context.elevated()
+    session = get_session()
+    with session.begin():
+
+        if domain_id is None:
+            domain_id = context.domain_id
+
+        # Get the current usages
+        domain_usages = _get_domain_quota_usages(context, session, domain_id)
+
+        # Handle usage refresh
+        work = set(deltas.keys())
+        while work:
+            resource = work.pop()
+
+            # Do we need to refresh the usage?
+            refresh = False
+            if resource not in domain_usages:
+                domain_usages[resource] = _domain_quota_usage_create(elevated,
+                                                      domain_id,
+                                                      resource,
+                                                      0, 0,
+                                                      until_refresh or None,
+                                                      session=session)
+                refresh = True
+            elif domain_usages[resource].in_use < 0:
+                # Negative in_use count indicates a desync, so try to
+                # heal from that...
+                refresh = True
+            elif domain_usages[resource].until_refresh is not None:
+                domain_usages[resource].until_refresh -= 1
+                if domain_usages[resource].until_refresh <= 0:
+                    refresh = True
+            elif max_age and (domain_usages[resource].updated_at -
+                              timeutils.utcnow()).seconds >= max_age:
+                refresh = True
+
+            # OK, refresh the usage
+            if refresh:
+                # Grab the sync routine
+                sync = QUOTA_SYNC_FUNCTIONS[resources[resource].sync]
+
+                updates = sync(elevated, project_id, user_id, session)
+                for res, in_use in updates.items():
+                    # Make sure we have a destination for the usage!
+                    if ((res not in PER_PROJECT_QUOTAS) and
+                            (res not in user_usages)):
+                        user_usages[res] = _quota_usage_create(elevated,
+                                                         project_id,
+                                                         user_id,
+                                                         res,
+                                                         0, 0,
+                                                         until_refresh or None,
+                                                         session=session)
+                    if ((res in PER_PROJECT_QUOTAS) and
+                            (res not in user_usages)):
+                        user_usages[res] = _quota_usage_create(elevated,
+                                                         project_id,
+                                                         None,
+                                                         res,
+                                                         0, 0,
+                                                         until_refresh or None,
+                                                         session=session)
+
+                    if user_usages[res].in_use != in_use:
+                        LOG.debug(_('quota_usages out of sync, updating. '
+                                    'project_id: %(project_id)s, '
+                                    'user_id: %(user_id)s, '
+                                    'resource: %(res)s, '
+                                    'tracked usage: %(tracked_use)s, '
+                                    'actual usage: %(in_use)s'),
+                            {'project_id': project_id,
+                             'user_id': user_id,
+                             'res': res,
+                             'tracked_use': user_usages[res].in_use,
+                             'in_use': in_use})
+
+                    # Update the usage
+                    user_usages[res].in_use = in_use
+                    user_usages[res].until_refresh = until_refresh or None
+
+                    # Because more than one resource may be refreshed
+                    # by the call to the sync routine, and we don't
+                    # want to double-sync, we make sure all refreshed
+                    # resources are dropped from the work set.
+                    work.discard(res)
+
+                    # NOTE(Vek): We make the assumption that the sync
+                    #            routine actually refreshes the
+                    #            resources that it is the sync routine
+                    #            for.  We don't check, because this is
+                    #            a best-effort mechanism.
+
+        # Check for deltas that would go negative
+        unders = [res for res, delta in deltas.items()
+                  if delta < 0 and
+                  delta + domain_usages[res].in_use < 0]
+
+        # Now, let's check the quotas
+        # NOTE(Vek): We're only concerned about positive increments.
+        #            If a project has gone over quota, we want them to
+        #            be able to reduce their usage without any
+        #            problems.
+        overs = [res for res, delta in deltas.items()
+                 if domain_quotas[res] >= 0 and delta >= 0 and
+                 (domain_quotas[res] < delta +
+                  domain_usages[res]['total'])]
+
+        # NOTE(Vek): The quota check needs to be in the transaction,
+        #            but the transaction doesn't fail just because
+        #            we're over quota, so the OverQuota raise is
+        #            outside the transaction.  If we did the raise
+        #            here, our usage updates would be discarded, but
+        #            they're not invalidated by being over-quota.
+
+        # Create the reservations
+        if not overs:
+            reservations = []
+            for res, delta in deltas.items():
+                reservation = _domain_reservation_create(elevated,
+                                                         str(uuid.uuid4()),
+                                                         user_usages[res],
+                                                         domain_id,
+                                                         res, delta, expire,
+                                                         session=session)
+                reservations.append(reservation.uuid)
+
+                # Also update the reserved quantity
+                # NOTE(Vek): Again, we are only concerned here about
+                #            positive increments.  Here, though, we're
+                #            worried about the following scenario:
+                #
+                #            1) User initiates resize down.
+                #            2) User allocates a new instance.
+                #            3) Resize down fails or is reverted.
+                #            4) User is now over quota.
+                #
+                #            To prevent this, we only update the
+                #            reserved value if the delta is positive.
+                if delta > 0:
+                    domain_usages[res].reserved += delta
+
+        # Apply updates to the usages table
+        for usage_ref in domain_usages.values():
+            session.add(usage_ref)
+
+    if unders:
+        LOG.warning(_("Change will make usage less than 0 for the following "
+                      "resources: %s"), unders)
+    if overs:
+        usages = domain_usages
+        usages = dict((k, dict(in_use=v['in_use'], reserved=v['reserved']))
+                      for k, v in usages.items())
+        raise exception.OverQuota(overs=sorted(overs), quotas=domain_quotas,
+                                  usages=usages)
+
+    return reservations
+
+
+def _domain_quota_reservations_query(session, context, reservations):
+    """Return the relevant reservations."""
+
+    # Get the listed reservations
+    return model_query(context, models.Reservation,
+                       read_deleted="no",
+                       session=session).\
+                   filter(models.Reservation.uuid.in_(reservations)).\
+                   with_lockmode('update')
+
+
+@require_context
 def reservation_commit(context, reservations, project_id=None, user_id=None):
     session = get_session()
     with session.begin():

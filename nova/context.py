@@ -239,7 +239,7 @@ def authorize_quota_class_context(context, class_name):
             raise exception.Forbidden()
 
 
-def authoriza_domain_context(context, domain_id):
+def authorize_domain_context(context, domain_id):
     """Ensures a request has permission to access the given domain."""
     if is_user_context(context):
         if not context.domain_id:

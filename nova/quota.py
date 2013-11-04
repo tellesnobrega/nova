@@ -279,7 +279,6 @@ class DbQuotaDriver(object):
         project_quotas = project_quotas or db.quota_get_all_by_project(
             context, project_id)
         project_usages = None
-
         if usages:
             project_usages = db.quota_usage_get_all_by_project(context,
                                                                project_id)
@@ -817,6 +816,7 @@ class DomainQuotaDriver(object):
                                     defaults=defaults, usages=domain_usages,
                                     remains=remains)
 
+
     def get_project_quotas(self, context, resources, project_id,
                            quota_class=None, defaults=True,
                            usages=True, remains=False):
@@ -909,13 +909,28 @@ class DomainQuotaDriver(object):
 
         :param context: The request context, for access checks.
         :param resources: A dictionary of the registered resources.
-        :param project_id: The ID of the project to return quotas for.
-        :param user_id: The ID of the user to return quotas for.
+        :param domain_id: The ID of the domain to return quotas for.
         """
         quotas = {}
         for resource in resources.values():
             quotas[resource.name].update(minimum=0, maximum=-1)
         return quotas
+
+    def limit_check_absolute(self, context, resources, values, domain_id=None):
+        unders = [key for key, val in values.items() if val < 0]
+        if unders:
+            raise exception.InvalidQuotaValue(unders=sorted(unders))
+        # If domain_id is None, then we use the domain_id in context
+        if domain_id is None:
+            domain_id = context.domain_id
+
+        quotas = self._get_quotas(context, resources, values.keys(),
+                                  has_sync=False, domain_id=domain_id)
+        overs = [key for key, val in values.items()
+                 if (quotas[key] >= 0 and quotas[key] < val)]
+        if overs:
+            raise exception.OverQuota(overs=sorted(overs), quotas=quotas,
+                                      usages={})
 
     def limit_check(self, context, resources, values, project_id=None,
                     user_id=None):
@@ -938,12 +953,9 @@ class DomainQuotaDriver(object):
         :param resources: A dictionary of the registered resources.
         :param values: A dictionary of the values to check against the
                        quota.
-        :param project_id: Specify the project_id if current context
+        :param domain_id: Specify the domain_id if current context
                            is admin and admin wants to impact on
                            common user's tenant.
-        :param user_id: Specify the user_id if current context
-                        is admin and admin wants to impact on
-                        common user.
         """
 
         # Ensure no value is less than zero
@@ -951,20 +963,16 @@ class DomainQuotaDriver(object):
         if unders:
             raise exception.InvalidQuotaValue(unders=sorted(unders))
 
-        # If project_id is None, then we use the project_id in context
-        if project_id is None:
-            project_id = context.project_id
-        # If user id is None, then we use the user_id in context
-        if user_id is None:
-            user_id = context.user_id
+        # If domain_id is None, then we use the project_id in context
+        if domain_id is None:
+            domain_id = context.domain_id
 
         # Get the applicable quotas
         quotas = self._get_quotas(context, resources, values.keys(),
-                                  has_sync=False, project_id=project_id)
+                                  has_sync=False, domain_id=domain_id)
 
         user_quotas = self._get_quotas(context, resources, values.keys(),
-                                       has_sync=False, project_id=project_id,
-                                       user_id=user_id)
+                                       has_sync=False, domain_id=domain_id,)
 
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
@@ -1062,7 +1070,7 @@ class DomainQuotaDriver(object):
         return db.domain_quota_reserve(context, resources, domain_quotas,
                                        deltas, expire,
                                        CONF.until_refresh, CONF.max_age,
-                                       project_list, domain_id=domain_id)
+                                       domain_id=domain_id)
 
     def commit(self, context, reservations, project_id=None, user_id=None):
         """Commit reservations.

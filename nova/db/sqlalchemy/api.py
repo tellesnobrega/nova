@@ -3225,10 +3225,6 @@ def quota_usage_get_all_by_project(context, project_id):
     return _quota_usage_get_all(context, project_id)
 
 
-@require_context
-def domain_quota_usage_get_all(context, domain_id):
-    return _domain_quota_usage_get_all(context, domain_id)
-
 def quota_usage_get_all_by_domain(context, domain_id):
     nova.context.authorize_domain_context(context, project_id)
     query = model_query(context, models.QuotaUsage, read_deleted="no").\

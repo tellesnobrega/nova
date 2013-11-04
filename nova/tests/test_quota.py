@@ -916,7 +916,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
 
     def test_limit_check(self):
         self._stub_get_project_quotas()
-        self.driverDomain.limit_check_absolute
+        self.driverDomain.limit_check
         (FakeContext('test_project', 'test_class'),
                                 quota.QUOTAS._resources,
                                 dict(key_pairs=10))

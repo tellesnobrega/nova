@@ -1586,8 +1586,8 @@ class DomainQuotaDriver(object):
         return dict((k, v['limit']) for k, v in domain_quotas.items())
         # Grab and return the quotas (without usages)
         quotas = self.get_domain_quotas(context, sub_resources,
-                                        domain_id,
-                                        context.quota_class, usages=False)
+                                        domain_id, context.quota_class,
+                                        usages=False)
 
         return dict((k, v['limit']) for k, v in quotas.items())
 
@@ -1616,14 +1616,14 @@ class DomainQuotaDriver(object):
                         will be returned.
         """
 
-        project_quotas = db.quota_get_all_by_domain(context, domain_id)
-        project_usages = None
+        domain_quotas = db.quota_get_all_by_domain(context, domain_id)
+        domain_usages = None
         if usages:
-            project_usages = db.quota_usage_get_all_by_project(context,
-                                                               project_id)
-        return self._process_quotas(context, resources, project_id,
-                                    project_quotas, quota_class,
-                                    defaults=defaults, usages=project_usages,
+            domain_usages = db.quota_usage_get_all_by_domain(context,
+                                                             domain_id)
+        return self._process_quotas(context, resources, domain_id,
+                                    domain_quotas, quota_class,
+                                    defaults=defaults, usages=domain_usages,
                                     remains=remains)
 
         return dict((k, v['limit']) for k, v in domain_quotas.items())
@@ -1720,13 +1720,28 @@ class DomainQuotaDriver(object):
 
         :param context: The request context, for access checks.
         :param resources: A dictionary of the registered resources.
-        :param project_id: The ID of the project to return quotas for.
-        :param user_id: The ID of the user to return quotas for.
+        :param domain_id: The ID of the domain to return quotas for.
         """
         quotas = {}
         for resource in resources.values():
             quotas[resource.name].update(minimum=0, maximum=-1)
         return quotas
+
+    def limit_check_absolute(self, context, resources, values, domain_id=None):
+        unders = [key for key, val in values.items() if val < 0]
+        if unders:
+            raise exception.InvalidQuotaValue(unders=sorted(unders))
+        # If domain_id is None, then we use the domain_id in context
+        if domain_id is None:
+            domain_id = context.domain_id
+
+        quotas = self._get_quotas(context, resources, values.keys(),
+                                  has_sync=False, domain_id=domain_id)
+        overs = [key for key, val in values.items()
+                 if (quotas[key] >= 0 and quotas[key] < val)]
+        if overs:
+            raise exception.OverQuota(overs=sorted(overs), quotas=quotas,
+                                      usages={})
 
     def limit_check(self, context, resources, values, project_id=None,
                     user_id=None):
@@ -1749,12 +1764,9 @@ class DomainQuotaDriver(object):
         :param resources: A dictionary of the registered resources.
         :param values: A dictionary of the values to check against the
                        quota.
-        :param project_id: Specify the project_id if current context
+        :param domain_id: Specify the domain_id if current context
                            is admin and admin wants to impact on
                            common user's tenant.
-        :param user_id: Specify the user_id if current context
-                        is admin and admin wants to impact on
-                        common user.
         """
 
         # Ensure no value is less than zero
@@ -1762,20 +1774,16 @@ class DomainQuotaDriver(object):
         if unders:
             raise exception.InvalidQuotaValue(unders=sorted(unders))
 
-        # If project_id is None, then we use the project_id in context
-        if project_id is None:
-            project_id = context.project_id
-        # If user id is None, then we use the user_id in context
-        if user_id is None:
-            user_id = context.user_id
+        # If domain_id is None, then we use the project_id in context
+        if domain_id is None:
+            domain_id = context.domain_id
 
         # Get the applicable quotas
         quotas = self._get_quotas(context, resources, values.keys(),
-                                  has_sync=False, project_id=project_id)
+                                  has_sync=False, domain_id=domain_id)
 
         user_quotas = self._get_quotas(context, resources, values.keys(),
-                                       has_sync=False, project_id=project_id,
-                                       user_id=user_id)
+                                       has_sync=False, domain_id=domain_id,)
 
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
@@ -1862,11 +1870,11 @@ class DomainQuotaDriver(object):
         #            which means access to the session.  Since the
         #            session isn't available outside the DBAPI, we
         #            have to do the work there.
-        return db.quota_reserve(context, resources, quotas, user_quotas,
-                                deltas, expire,
-                                CONF.until_refresh, CONF.max_age,
-                                project_id=project_id, user_id=user_id)
-        return []
+
+        return db.domain_quota_reserve(context, resources, domain_quotas,
+                                       deltas, expire,
+                                       CONF.until_refresh, CONF.max_age,
+                                       domain_id=domain_id)
 
     def commit(self, context, reservations, project_id=None, user_id=None):
         """Commit reservations.

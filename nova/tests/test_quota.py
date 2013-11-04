@@ -746,8 +746,6 @@ class QuotaEngineTestCase(test.TestCase):
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
 
-        self.assertTrue(False)
-
     def test_commit(self):
         context = FakeContext(None, None)
         driver = FakeDriver()

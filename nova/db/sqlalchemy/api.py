@@ -1677,17 +1677,14 @@ def _instance_data_get_for_user(context, project_id, user_id, session=None):
     return (result[0] or 0, result[1] or 0, result[2] or 0)
 
 
-def _instance_data_get_for_domain(context, user_id, project_id, session=None):
+def _instance_data_get_for_domain(context, domain_id, session=None):
     result = model_query(context,
                          func.count(models.Instance.id),
                          func.sum(models.Instance.vcpus),
                          func.sum(models.Instance.memory_mb),
                          base_model=models.Instance,
                          session=session).\
-                     filter_by(project_id=project_id)
-    if user_id:
-        result = result.filter_by(user_id=user_id).first()
-    else:
+                     filter_by(domain_id=domain_id)
         result = result.first()
     # NOTE(vish): convert None to 0
     return (result[0] or 0, result[1] or 0, result[2] or 0)
@@ -3226,27 +3223,6 @@ def quota_usage_get_all_by_project(context, project_id):
 
 
 def quota_usage_get_all_by_domain(context, domain_id):
-    nova.context.authorize_domain_context(context, project_id)
-    query = model_query(context, models.QuotaUsage, read_deleted="no").\
-                   filter_by(project_id=project_id)
-    result = {'project_id': project_id}
-    if user_id:
-        query = query.filter(or_(models.QuotaUsage.user_id == user_id,
-                                 models.QuotaUsage.user_id == None))
-        result['user_id'] = user_id
-
-    rows = query.all()
-    for row in rows:
-        if row.resource in result:
-            result[row.resource]['in_use'] += row.in_use
-            result[row.resource]['reserved'] += row.reserved
-        else:
-            result[row.resource] = dict(in_use=row.in_use,
-                                        reserved=row.reserved)
-
-    return result
-
-def quota_usage_get_all_by_domain(context, domain_id):
     nova.context.authorize_domain_context(context, domain_id)
     query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
                    filter_by(domain_id=domain_id)
@@ -3634,7 +3610,18 @@ def _get_domain_quota_usages(context, session, domain_id):
                    filter_by(domain_id=domain_id).\
                    with_lockmode('update').\
                    all()
-    return dict((row.resource, row) for row in rows)
+    result = dict()
+    # Get the total count of in_use,reserved
+    for row in rows:
+        if row.resource in result:
+            result[row.resource]['in_use'] += row.in_use
+            result[row.resource]['reserved'] += row.reserved
+            result[row.resource]['total'] += (row.in_use + row.reserved)
+        else:
+            result[row.resource] = dict(in_use=row.in_use,
+                                        reserved=row.reserved,
+                                        total=row.in_use + row.reserved)
+    return result
 
 
 @require_context
@@ -3943,6 +3930,17 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
                                   usages=usages)
 
     return reservations
+
+
+def _domain_quota_reservations_query(session, context, reservations):
+    """Return the relevant reservations."""
+
+    # Get the listed reservations
+    return model_query(context, models.Reservation,
+                       read_deleted="no",
+                       session=session).\
+                   filter(models.Reservation.uuid.in_(reservations)).\
+                   with_lockmode('update')
 
 
 @require_context

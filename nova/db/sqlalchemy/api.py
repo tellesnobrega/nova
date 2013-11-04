@@ -2936,7 +2936,7 @@ def quota_get_all_by_project_and_user(context, project_id, user_id):
 
 @require_context
 def quota_get_all_by_domain(context, domain_id):
-    nova.context.authorize_project_context(context, project_id)
+    nova.context.authorize_domain_context(context, domain_id)
 
     rows = model_query(context, models.DomainQuota, read_deleted="no").\
                    filter_by(domain_id=domain_id).\

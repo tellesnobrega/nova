@@ -841,7 +841,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
                 injected_file_path_bytes=-1,
                 security_groups=-1,
                 security_group_rules=-1,
-                key_pairs=-1,
+                key_pairs=100,
                 ))
 
     def _stub_quota_class_get_default(self):
@@ -850,7 +850,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
             self.calls.append('quota_class_get_default')
             return dict(
                 instances=-1,
-                ram=-1,
+                ram=10,
                 metadata_items=-1,
                 injected_file_content_bytes=-1,
                 )
@@ -869,7 +869,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
 
     def test_limit_check(self):
         self._stub_get_project_quotas()
-        self.driverDomain.limit_check_absolute
+        self.driverDomain.limit_check
         (FakeContext('test_project', 'test_class'),
                                 quota.QUOTAS._resources,
                                 dict(key_pairs=10))
@@ -877,7 +877,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
     def test_limit_check_under(self):
         self._stub_get_project_quotas()
         self.assertRaises(exception.InvalidQuotaValue,
-                          self.driverDomain.limit_check_absolute,
+                          self.driverDomain.limit_check,
                           FakeContext('test_project', 'test_class'),
                           quota.QUOTAS._resources,
                           dict(metadata_items=-1))
@@ -885,7 +885,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
     def test_limit_check_over(self):
         self._stub_get_project_quotas()
         self.assertRaises(exception.OverQuota,
-                          self.driverDomain.limit_check_absolute,
+                          self.driverDomain.limit_check,
                           FakeContext('test_project', 'test_class'),
                           quota.QUOTAS._resources,
                           dict(key_pairs=101))
@@ -893,7 +893,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
     def test_limit_check_unlimited(self):
         self.flags(quota_metadata_items=-1)
         self._stub_get_project_quotas()
-        self.driverDomain.limit_check_absolute(
+        self.driverDomain.limit_check(
                 FakeContext('test_project', 'test_class'),
                                 quota.QUOTAS._resources,
                                 dict(metadata_items=32767))

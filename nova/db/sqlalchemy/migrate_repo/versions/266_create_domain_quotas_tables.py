@@ -15,7 +15,7 @@
 from migrate.changeset import UniqueConstraint
 from migrate import ForeignKeyConstraint
 from sqlalchemy import Column, DateTime, Index
-from sqlalchemy import Boolean, MetaData, Integer, String, Table
+from sqlalchemy import MetaData, Integer, String, Table
 
 from nova.db.sqlalchemy import utils
 from nova.openstack.common.gettextutils import _

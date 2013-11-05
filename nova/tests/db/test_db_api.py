@@ -117,6 +117,7 @@ def _quota_reserve(context, project_id, user_id):
                     timeutils.utcnow(), CONF.until_refresh,
                     datetime.timedelta(days=1), project_id, user_id)
 
+
 def _domain_quota_reserve(context, domain_id):
     """Create sample Quota, QuotaUsage and Reservation objects.
 
@@ -143,21 +144,22 @@ def _domain_quota_reserve(context, domain_id):
                                                        domain_id, resource, i)
         else:
             domain_quotas[resource] = db.domain_quota_create(context,
-                                                       domain_id, resource, i)   
+                                                       domain_id, resource, i)
         sync_name = '_sync_%s' % resource
         resources[resource] = quota.ReservableResource(
             resource, sync_name, 'quota_res_%d' % i)
-        
+
         deltas[resource] = i
-        
+
         setattr(sqlalchemy_api, sync_name, get_sync(resource, i))
-        
+
         sqlalchemy_api.QUOTA_SYNC_FUNCTIONS[sync_name] = getattr(
             sqlalchemy_api, sync_name)
-        
+
     return db.domain_quota_reserve(context, resources, domain_quotas,
-                                    deltas, timeutils.utcnow(), CONF.until_refresh,
+                    deltas, timeutils.utcnow(), CONF.until_refresh,
                     datetime.timedelta(days=1), domain_id)
+
 
 class DbTestCase(test.TestCase):
     def setUp(self):
@@ -1177,8 +1179,8 @@ class ReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'fixed_ips': {'reserved': 0, 'in_use': 2}}
         self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
                                             self.ctxt, 'project1', 'user1'))
-        
-        
+
+
 class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
     """Tests for db.api.reservation_* methods."""
@@ -1224,6 +1226,7 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))
+
 
 class SecurityGroupRuleTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def setUp(self):

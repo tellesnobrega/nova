@@ -1049,8 +1049,8 @@ def domain_quota_create(context, domain_id, resource, limit, user_id=None):
     """Create a quota for the given domain and resource."""
     return IMPL.domain_quota_create(context, domain_id, resource,
                                      limit, user_id=None)
-    
-    
+
+
 def quota_get(context, project_id, resource, user_id=None):
     """Retrieve a quota or raise if it does not exist."""
     return IMPL.quota_get(context, project_id, resource, user_id=user_id)

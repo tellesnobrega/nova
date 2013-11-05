@@ -227,6 +227,17 @@ def model_query(context, model, *args, **kwargs):
 
     query = session.query(model, *args)
 
+    print "<<<<<<<<<<<<<<<<<<<<<<BASE_MODEL>>>>>>>>>>>>>>>>>>>>"
+    print base_model
+    print "<<<<<<<<<<<<<<<<<<<<<<__MAPPER__>>>>>>>>>>>>>>>>>>>>"
+    print base_model.__mapper__
+    print "<<<<<<<<<<<<<<<<<<<<<<C>>>>>>>>>>>>>>>>>>>>"
+    print base_model.__mapper__.c
+    print "<<<<<<<<<<<<<<<<<<<<<<DELETED>>>>>>>>>>>>>>>>>>>>"
+    print base_model.__mapper__.c.deleted
+    print "<<<<<<<<<<<<<<<<<<<<<<DEFAULT>>>>>>>>>>>>>>>>>>>>"
+    print base_model.__mapper__.c.deleted.default
+
     default_deleted_value = base_model.__mapper__.c.deleted.default.arg
 
     if read_deleted == 'no':
@@ -3098,9 +3109,6 @@ def quota_domain_get_default(context):
     for row in rows:
         result[row.resource] = row.hard_limit
 
-    print "<<<<<<<<<<<<<<<<<<<GET_DEFAULTS>>>>>>>>>>>>>>>>>>>>>"
-    print result
-
     return result
 
 
@@ -3739,7 +3747,6 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
                          until_refresh, max_age, domain_id=None):
     elevated = context.elevated()
     session = get_session()
-    print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<DOMAIN_QUOTA_RESERVE>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
     with session.begin():
 
         if domain_id is None:

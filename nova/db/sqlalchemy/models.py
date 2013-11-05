@@ -582,7 +582,7 @@ class DomainReservation(BASE, NovaBase):
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
     deleted_at = Column(DateTime)
-    deleted = Column(Integer)
+    deleted = Column(Integer, default=0)
 
     uuid = Column(String(36), nullable=False)
     usage_id = Column(Integer, ForeignKey('domain_quota_usages.id'),

@@ -1138,6 +1138,42 @@ class ReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                                             self.ctxt, 'project1', 'user1'))
 
 
+class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
+
+    """Tests for db.api.reservation_* methods."""
+
+    def setUp(self):
+        super(DomainReservationTestCase, self).setUp()
+        self.ctxt = context.get_admin_context()
+        self.values = {'uuid': 'sample-uuid',
+                'domain_id': 'domain1',
+                'resource': 'resource',
+                'delta': 42,
+                'expire': timeutils.utcnow() + datetime.timedelta(days=1),
+                'usage': {'id': 1}}
+
+    def test_domain_reservation_create(self):
+        reservation = db.domain_reservation_create(self.ctxt, **self.values)
+        self._assertEqualObjects(self.values, reservation, ignored_keys=(
+                        'deleted', 'updated_at',
+                        'deleted_at', 'id',
+                        'created_at', 'usage',
+                        'usage_id'))
+        self.assertEqual(reservation['usage_id'], self.values['usage']['id'])
+
+    def test_domain_reservation_get(self):
+        reservation = db.domain_reservation_create(self.ctxt, **self.values)
+        reservation_db = db.domain_reservation_get(self.ctxt,
+                                                   self.values['uuid'])
+        self._assertEqualObjects(reservation, reservation_db)
+
+    def test_domain_reservation_get_nonexistent(self):
+        self.assertRaises(exception.ReservationNotFound,
+                          db.domain_reservation_get,
+                          self.ctxt, 'non-exitent-resevation-uuid')
+
+
+
 class SecurityGroupRuleTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def setUp(self):
         super(SecurityGroupRuleTestCase, self).setUp()

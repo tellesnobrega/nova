@@ -1045,6 +1045,12 @@ def quota_create(context, project_id, resource, limit, user_id=None):
                              user_id=user_id)
 
 
+def domain_quota_create(context, domain_id, resource, limit, user_id=None):
+    """Create a quota for the given domain and resource."""
+    return IMPL.domain_quota_create(context, domain_id, resource,
+                                     limit, user_id=None)
+    
+    
 def quota_get(context, project_id, resource, user_id=None):
     """Retrieve a quota or raise if it does not exist."""
     return IMPL.quota_get(context, project_id, resource, user_id=user_id)
@@ -1142,6 +1148,11 @@ def quota_usage_get_all_by_project_and_user(context, project_id, user_id):
 def domain_quota_usage_get_all(context, domain_id):
     """Retrieve all usage associated with a given resource."""
     return IMPL.domain_quota_usage_get_all(context, domain_id)
+
+
+def quota_usage_get_all_by_domain(context, domain_id):
+    """Retrieve all usage associated with a given resource."""
+    return IMPL.quota_usage_get_all_by_domain(context, domain_id)
 
 
 def quota_usage_get_all_by_project(context, project_id):

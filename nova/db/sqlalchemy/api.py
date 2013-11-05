@@ -227,17 +227,6 @@ def model_query(context, model, *args, **kwargs):
 
     query = session.query(model, *args)
 
-    print "<<<<<<<<<<<<<<<<<<<<<<BASE_MODEL>>>>>>>>>>>>>>>>>>>>"
-    print base_model
-    print "<<<<<<<<<<<<<<<<<<<<<<__MAPPER__>>>>>>>>>>>>>>>>>>>>"
-    print base_model.__mapper__
-    print "<<<<<<<<<<<<<<<<<<<<<<C>>>>>>>>>>>>>>>>>>>>"
-    print base_model.__mapper__.c
-    print "<<<<<<<<<<<<<<<<<<<<<<DELETED>>>>>>>>>>>>>>>>>>>>"
-    print base_model.__mapper__.c.deleted
-    print "<<<<<<<<<<<<<<<<<<<<<<DEFAULT>>>>>>>>>>>>>>>>>>>>"
-    print base_model.__mapper__.c.deleted.default
-
     default_deleted_value = base_model.__mapper__.c.deleted.default.arg
 
     if read_deleted == 'no':
@@ -3629,7 +3618,7 @@ def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
         work = set(deltas.keys())
         while work:
             resource = work.pop()
-
+            
             # Do we need to refresh the usage?
             created = _create_quota_usage_if_missing(user_usages, resource,
                                                      until_refresh, project_id,
@@ -3664,6 +3653,7 @@ def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
                     #            a best-effort mechanism.
 
         # Check for deltas that would go negative
+        
         unders = [res for res, delta in deltas.items()
                   if delta < 0 and
                   delta + user_usages[res].in_use < 0]
@@ -3751,13 +3741,13 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
 
         if domain_id is None:
             domain_id = context.domain_id
-
+        
         # Get the current usages
         domain_usages = _get_domain_quota_usages(context, session, domain_id)
-
+        
         # Handle usage refresh
         work = set(deltas.keys())
-        """while work:
+        while work:
             resource = work.pop()
 
             # Do we need to refresh the usage?
@@ -3781,7 +3771,7 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
             elif max_age and (domain_usages[resource].updated_at -
                               timeutils.utcnow()).seconds >= max_age:
                 refresh = True
-
+            """
             # OK, refresh the usage
             if refresh:
                 # Grab the sync routine
@@ -3842,17 +3832,18 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
         unders = [res for res, delta in deltas.items()
                   if delta < 0 and
                   delta + domain_usages[res].in_use < 0]
-
+        
         # Now, let's check the quotas
         # NOTE(Vek): We're only concerned about positive increments.
         #            If a project has gone over quota, we want them to
         #            be able to reduce their usage without any
         #            problems.
+        print domain_usages
         overs = [res for res, delta in deltas.items()
                  if domain_quotas[res] >= 0 and delta >= 0 and
                  (domain_quotas[res] < delta +
                   domain_usages[res]['total'])]
-
+        
         # NOTE(Vek): The quota check needs to be in the transaction,
         #            but the transaction doesn't fail just because
         #            we're over quota, so the OverQuota raise is

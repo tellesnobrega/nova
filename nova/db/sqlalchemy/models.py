@@ -1,3 +1,4 @@
+# vim: tabstop=4 shiftwidth=4 softtabstop=4
 # Copyright (c) 2011 X.commerce, a business unit of eBay Inc.
 # Copyright 2010 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration.
@@ -526,7 +527,7 @@ class DomainQuotaUsage(BASE, NovaBase):
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
     deleted_at = Column(DateTime)
-    deleted = Column(Integer)
+    deleted = Column(Integer, default=0)
 
     domain_id = Column(String(255))
     resource = Column(String(255), nullable=False)

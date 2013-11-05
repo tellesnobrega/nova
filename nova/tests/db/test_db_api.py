@@ -130,6 +130,7 @@ def _quota_reserve(context, project_id, user_id):
                     timeutils.utcnow(), CONF.until_refresh,
                     datetime.timedelta(days=1), project_id, user_id)
 
+
 def _domain_quota_reserve(context, domain_id):
     """Create sample Quota, QuotaUsage and Reservation objects.
 
@@ -169,7 +170,7 @@ def _domain_quota_reserve(context, domain_id):
             sqlalchemy_api, sync_name)
 
     return db.domain_quota_reserve(context, resources, domain_quotas,
-                                    deltas, timeutils.utcnow(), CONF.until_refresh,
+                    deltas, timeutils.utcnow(), CONF.until_refresh,
                     datetime.timedelta(days=1), domain_id)
 
 class FakeProject(object):
@@ -1095,11 +1096,6 @@ class ModelsObjectComparatorMixin(object):
     def _assertEqualObjects(self, obj1, obj2, ignored_keys=None):
         obj1 = self._dict_from_object(obj1, ignored_keys)
         obj2 = self._dict_from_object(obj2, ignored_keys)
-        print "<<<<<<<<OBJ1>>>>>>>>>"
-        print obj1
-
-        print "<<<<<<<<OBJ2>>>>>>>>>>"
-        print obj2
 
         self.assertEqual(len(obj1),
                          len(obj2),
@@ -1335,6 +1331,7 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))
+
 
 class SecurityGroupRuleTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def setUp(self):

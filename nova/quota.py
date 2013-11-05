@@ -1487,6 +1487,7 @@ class DomainQuotaDriver(object):
         :param context: The request context, for access checks.
         :param resources: A dictionary of the registered resources.
         """
+
         quotas = {}
         default_quotas = db.quota_domain_get_default(context)
         for resource in resources.values():
@@ -1510,8 +1511,12 @@ class DomainQuotaDriver(object):
                          resource.
         """
         quotas = {}
+        class_quotas = db.quota_class_get_all_by_name(context, quota_class)
         for resource in resources.values():
-            quotas[resource.name] = -1
+            if defaults or resource.name in class_quotas:
+                quotas[resource.name] = class_quotas.get(resource.name,
+                                                         resource.default)
+
         return quotas
 
     def get_user_quotas(self, context, resources, project_id, user_id,

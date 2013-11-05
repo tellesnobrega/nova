@@ -905,15 +905,15 @@ class DomainQuotaDriverTestCase(test.TestCase):
         def fake_get_project_quotas(context, resources, project_id,
                                     quota_class=None, defaults=True,
                                     usages=True, remains=False):
-            self.calls.append('get_project_quotas')
+            self.calls.append('get_domain_quotas')
             return dict((k, dict(limit=v.default))
                         for k, v in resources.items())
 
-        self.stubs.Set(self.driverDomain, 'get_project_quotas',
-                       fake_get_project_quotas)
+        self.stubs.Set(self.driverDomain, 'get_domain_quotas',
+                       fake_get_domain_quotas)
 
     def test_limit_check(self):
-        self._stub_get_project_quotas()
+        self._stub_get_domain_quotas()
         self.driverDomain.limit_check
         (FakeContext('test_project', 'test_class'),
                                 quota.QUOTAS._resources,
@@ -947,6 +947,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
         def fake_domain_quota_reserve(context, resources, domain_quotas,
                                       deltas, expire, until_refresh, max_age,
                                       project_list, domain_id=None):
+                                      domain_id=None):
             self.calls.append(('domain_quota_reserve', expire, until_refresh,
                                max_age))
             return ['dresv-1', 'dresv-2', 'dresv-3']
@@ -1002,6 +1003,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
                                            quota.QUOTAS._resources,
                                            dict(instances=2),
                                            expire=expire_delta)
+                                           dict(instances=2), expire=expire_delta)
 
         expire = timeutils.utcnow() + expire_delta
         self.assertEqual(self.calls, [
@@ -1018,12 +1020,8 @@ class DomainQuotaDriverTestCase(test.TestCase):
                                                        'test_class'),
                                            quota.QUOTAS._resources,
                                            dict(instances=2),
-                                            expire=expire)
+                                           expire=expire)
 
-=======
->>>>>>> US-12
-=======
->>>>>>> US 14
 
 class DbQuotaDriverTestCase(test.TestCase):
     def setUp(self):

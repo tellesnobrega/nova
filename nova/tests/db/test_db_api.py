@@ -1332,7 +1332,6 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))
 
-
 class SecurityGroupRuleTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def setUp(self):
         super(SecurityGroupRuleTestCase, self).setUp()

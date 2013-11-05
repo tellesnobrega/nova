@@ -1136,6 +1136,33 @@ class ReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'fixed_ips': {'reserved': 0, 'in_use': 2}}
         self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
                                             self.ctxt, 'project1', 'user1'))
+        
+        
+class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
+
+    """Tests for db.api.reservation_* methods."""
+
+    def setUp(self):
+        super(DomainReservationTestCase, self).setUp()
+        self.ctxt = context.get_admin_context()
+        self.values = {'uuid': 'sample-uuid',
+                'domain_id': 'domain1',
+                'resource': 'resource',
+                'delta': 42,
+                'expire': timeutils.utcnow() + datetime.timedelta(days=1),
+                'usage': {'id': 1}}
+        
+    def test_reservation_expire(self):
+        self.values['expire'] = timeutils.utcnow() + datetime.timedelta(days=1)
+        _quota_reserve(self.ctxt, 'project1', 'user1')
+        db.domain_reservation_expire(self.ctxt)
+
+        expected = {'domain_id': 'domain1',
+                'resource0': {'reserved': 0, 'in_use': 0},
+                'resource1': {'reserved': 0, 'in_use': 1},
+                'fixed_ips': {'reserved': 0, 'in_use': 2}}
+        self.assertEqual(expected, db.domain_quota_usage_get_all(
+                                            self.ctxt, 'project1', 'domain1'))
 
 
 class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):

@@ -4013,6 +4013,24 @@ def reservation_expire(context):
         reservation_query.soft_delete(synchronize_session=False)
 
 
+@require_admin_context
+def domain_reservation_expire(context):
+    session = get_session()
+    with session.begin():
+        current_time = timeutils.utcnow()
+        reservation_query = model_query(context, models.DomainReservation,
+                                        session=session, read_deleted="no").\
+                            filter(models.DomainReservation.expire
+                                    < current_time)
+
+        for reservation in reservation_query.join(models.DomainQuotaUsage
+                                                  ).all():
+            if reservation.delta >= 0:
+                reservation.usage.reserved -= reservation.delta
+                session.add(reservation.usage)
+
+        reservation_query.soft_delete(synchronize_session=False)
+
 ###################
 
 

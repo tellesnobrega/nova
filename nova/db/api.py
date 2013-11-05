@@ -1237,6 +1237,11 @@ def reservation_expire(context):
     return IMPL.reservation_expire(context)
 
 
+def domain_reservation_expire(context):
+    """Roll back any expired reservations."""
+    return IMPL.domain_reservation_expire(context)
+
+
 ###################
 
 

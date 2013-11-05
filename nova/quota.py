@@ -1154,7 +1154,7 @@ class DomainQuotaDriver(object):
 
         :param context: The request context, for access checks.
         """
-        pass
+        db.domain_reservation_expire(context)
 
 
 class NoopQuotaDriver(object):

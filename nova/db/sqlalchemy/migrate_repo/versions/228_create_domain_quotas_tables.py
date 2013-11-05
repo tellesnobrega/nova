@@ -55,16 +55,16 @@ def upgrade(migrate_engine):
 
     domain_reservation = Table('domain_reservations', meta,
         Column('id', Integer, primary_key=True, nullable=False),
-        Column('created_at', DateTime),
-        Column('updated_at', DateTime),
-        Column('deleted_at', DateTime),
-        Column('deleted', Boolean),
+        Column('created_at', DateTime(timezone=False)),
+        Column('updated_at', DateTime(timezone=False)),
+        Column('deleted_at', DateTime(timezone=False)),
+        Column('deleted', Integer),
         Column('uuid', String(length=36), nullable=False),
         Column('domain_id', String(255)),
         Column('usage_id', Integer, nullable=False),
         Column('resource', String(length=255)),
         Column('delta', Integer, nullable=False),
-        Column('expire', DateTime),
+        Column('expire', DateTime(timezone=False)),
         mysql_engine='InnoDB',
         mysql_charset='utf8'
     )

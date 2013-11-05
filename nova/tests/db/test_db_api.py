@@ -1233,8 +1233,11 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
         reservation = db.domain_reservation_create(self.ctxt, **self.values)
         reservation_db = db.domain_reservation_get(self.ctxt,
                                                    self.values['uuid'])
+<<<<<<< HEAD
 
         print reservation, reservation_db
+=======
+>>>>>>> US16 tests
         self._assertEqualObjects(reservation, reservation_db)
 
     def test_domain_reservation_get_nonexistent(self):
@@ -1242,6 +1245,7 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                           db.domain_reservation_get,
                           self.ctxt, 'non-exitent-resevation-uuid')
 
+<<<<<<< HEAD
     def test_domain_reservation_commit(self):
         reservations = _domain_quota_reserve(self.ctxt, 'domain1')
         expected = {'domain_id': 'domain1',
@@ -1291,6 +1295,8 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))
+=======
+>>>>>>> US16 tests
 
 
 class SecurityGroupRuleTestCase(test.TestCase, ModelsObjectComparatorMixin):

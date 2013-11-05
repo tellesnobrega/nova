@@ -465,7 +465,6 @@ class DomainQuota(BASE, NovaBase):
     updated_at = Column(DateTime)
     deleted_at = Column(DateTime)
     deleted = Column(Integer, default=0)
-<<<<<<< HEAD
 
     domain_id = Column(String(255), nullable=False)
 
@@ -491,8 +490,6 @@ class DomainProjectUserQuota(BASE, NovaBase):
     updated_at = Column(DateTime)
     deleted_at = Column(DateTime)
     deleted = Column(Integer)
-=======
->>>>>>> US16 and US14 merged
 
     domain_id = Column(String(255), nullable=False)
 
@@ -612,9 +609,6 @@ class DomainReservation(BASE, NovaBase):
     updated_at = Column(DateTime(timezone=False))
     deleted_at = Column(DateTime(timezone=False))
     deleted = Column(Integer, default=0)
-    created_at = Column(DateTime)
-    updated_at = Column(DateTime)
-    deleted_at = Column(DateTime)
 
     uuid = Column(String(36), nullable=False)
     usage_id = Column(Integer, ForeignKey('domain_quota_usages.id'),

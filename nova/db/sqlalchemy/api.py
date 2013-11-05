@@ -228,6 +228,7 @@ def model_query(context, model, *args, **kwargs):
     query = session.query(model, *args)
 
     default_deleted_value = base_model.__mapper__.c.deleted.default.arg
+
     if read_deleted == 'no':
         query = query.filter(base_model.deleted == default_deleted_value)
     elif read_deleted == 'yes':
@@ -1676,7 +1677,7 @@ def _instance_data_get_for_user(context, project_id, user_id, session=None):
     return (result[0] or 0, result[1] or 0, result[2] or 0)
 
 
-def _instance_data_get_for_domain(context, domain_id, session=None):
+def _instance_data_get_for_domain(context, user_id, project_id, session=None):
     result = model_query(context,
                          func.count(models.Instance.id),
                          func.sum(models.Instance.vcpus),
@@ -3745,7 +3746,7 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
 
         # Handle usage refresh
         work = set(deltas.keys())
-        while work:
+        """while work:
             resource = work.pop()
 
             # Do we need to refresh the usage?
@@ -3824,7 +3825,7 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
                     #            routine actually refreshes the
                     #            resources that it is the sync routine
                     #            for.  We don't check, because this is
-                    #            a best-effort mechanism.
+                    #            a best-effort mechanism."""
 
         # Check for deltas that would go negative
         unders = [res for res, delta in deltas.items()

@@ -1074,9 +1074,11 @@ def quota_get_all(context, project_id):
     """Retrieve all user quotas associated with a given project."""
     return IMPL.quota_get_all(context, project_id)
 
+
 def domain_quota_get_all(context, domain_id):
     """Retrieve all user quotas associated with a given domain."""
     return IMPL.domain_quota_get_all(context, domain_id)
+
 
 def quota_update(context, project_id, resource, limit, user_id=None):
     """Update a quota or raise if it does not exist."""
@@ -1195,6 +1197,14 @@ def quota_reserve(context, resources, quotas, user_quotas, deltas, expire,
     return IMPL.quota_reserve(context, resources, quotas, user_quotas, deltas,
                               expire, until_refresh, max_age,
                               project_id=project_id, user_id=user_id)
+
+
+def domain_quota_reserve(context, resources, domain_quotas, deltas,
+                         expire, until_refresh, max_age, domain_id):
+    """Check domain quotas and create appropriate reservations."""
+    return IMPL.domain_quota_reserve(context, resources, domain_quotas, deltas,
+                                     expire, until_refresh, max_age,
+                                     domain_id=domain_id)
 
 
 def reservation_commit(context, reservations, project_id=None, user_id=None):

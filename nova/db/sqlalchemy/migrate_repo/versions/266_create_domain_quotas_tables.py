@@ -28,11 +28,11 @@ def upgrade(migrate_engine):
     meta = MetaData(bind=migrate_engine)
 
     domain_quota = Table('domain_quotas', meta,
-            Column('id', Integer(), primary_key=True, nullable=False),
+            Column('id', Integer, primary_key=True, nullable=False),
             Column('created_at', DateTime(timezone=False)),
             Column('updated_at', DateTime(timezone=False)),
             Column('deleted_at', DateTime(timezone=False)),
-            Column('deleted', Integer()),
+            Column('deleted', Integer),
             Column('domain_id', String(255)),
             Column('resource', String(255), nullable=False),
             Column('hard_limit', Integer()),
@@ -40,16 +40,16 @@ def upgrade(migrate_engine):
             mysql_charset='utf8')
 
     domain_quota_usage = Table('domain_quota_usages', meta,
-            Column('id', Integer(), primary_key=True, nullable=False),
+            Column('id', Integer, primary_key=True, nullable=False),
             Column('created_at', DateTime(timezone=False)),
             Column('updated_at', DateTime(timezone=False)),
             Column('deleted_at', DateTime(timezone=False)),
-            Column('deleted', Integer()),
+            Column('deleted', Integer),
             Column('domain_id', String(255)),
             Column('resource', String(255), nullable=False),
-            Column('in_use', Integer(), nullable=False),
-            Column('reserved', Integer(), nullable=False),
-            Column('until_refresh', Integer()),
+            Column('in_use', Integer, nullable=False),
+            Column('reserved', Integer, nullable=False),
+            Column('until_refresh', Integer),
             mysql_engine='InnoDB',
             mysql_charset='utf8')
 

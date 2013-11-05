@@ -463,7 +463,7 @@ class DomainQuota(BASE, NovaBase):
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
     deleted_at = Column(DateTime)
-    deleted = Column(Integer)
+    deleted = Column(Integer, default=0)
 
     domain_id = Column(String(255), nullable=False)
 

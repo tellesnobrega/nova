@@ -738,8 +738,8 @@ class DomainQuotaDriver(object):
             quotas[resource.name] = -1
         return quotas
 
-    def _get_quotas(self, context, resources, keys, has_sync, project_id=None,
-                    user_id=None):
+    def _get_quotas(self, context, resources, keys, has_sync,
+                    domain_id=None):
         """
         A helper method which retrieves the quotas for the specific
         resources identified by keys, and which apply to the current
@@ -816,7 +816,6 @@ class DomainQuotaDriver(object):
                                     defaults=defaults, usages=domain_usages,
                                     remains=remains)
 
-
     def get_project_quotas(self, context, resources, project_id,
                            quota_class=None, defaults=True,
                            usages=True, remains=False):
@@ -842,11 +841,10 @@ class DomainQuotaDriver(object):
                         will be returned.
         """
         domain_id = context.domain_id
-        domain_quotas = db.quota_get_all_by_domain(context, domain_id)(context, project_id)
+        domain_quotas = db.quota_get_all_by_domain(context, domain_id)
         domain_usages = None
         if usages:
             domain_usages = db.domain_quota_usage_get_all(context, domain_id)
-
 
         return self._process_quotas(context, resources, domain_id,
                                     domain_quotas, quota_class,
@@ -899,7 +897,6 @@ class DomainQuotaDriver(object):
                             quota.hard_limit
 
         return modified_quotas
-
 
     def get_settable_quotas(self, context, resources, project_id,
                             user_id=None):
@@ -963,9 +960,14 @@ class DomainQuotaDriver(object):
         if unders:
             raise exception.InvalidQuotaValue(unders=sorted(unders))
 
-        # If domain_id is None, then we use the project_id in context
-        if domain_id is None:
-            domain_id = context.domain_id
+        domain_id = context.domain_id
+
+        # If project_id is None, then we use the project_id in context
+        if project_id is None:
+            project_id = context.project_id
+        # If user id is None, then we use the user_id in context
+        if user_id is None:
+            user_id = context.user_id
 
         # Get the applicable quotas
         quotas = self._get_quotas(context, resources, values.keys(),
@@ -2104,12 +2106,13 @@ class QuotaEngine(object):
                         common user.
         """
 
-        return (self._driver.limit_check(context, self._resources, values,
-                                        project_id=project_id, user_id=user_id)
-        and self._driverDomain.limit_check(context, self._resources, values,
-                                        project_id=project_id, user_id=user_id))
-
-
+        return (self._driver_domain.limit_check(context, self._resources,
+                                                values,
+                                                project_id=project_id,
+                                                user_id=user_id)
+                and self._driver.limit_check(context, self._resources, values,
+                                             project_id=project_id,
+                                             user_id=user_id))
 
     def reserve(self, context, expire=None, project_id=None, user_id=None,
                 **deltas):

@@ -227,17 +227,6 @@ def model_query(context, model, *args, **kwargs):
 
     query = session.query(model, *args)
 
-    print "<<<<<<<<<<<<<<<<<<<<<<BASE_MODEL>>>>>>>>>>>>>>>>>>>>"
-    print base_model
-    print "<<<<<<<<<<<<<<<<<<<<<<__MAPPER__>>>>>>>>>>>>>>>>>>>>"
-    print base_model.__mapper__
-    print "<<<<<<<<<<<<<<<<<<<<<<C>>>>>>>>>>>>>>>>>>>>"
-    print base_model.__mapper__.c
-    print "<<<<<<<<<<<<<<<<<<<<<<DELETED>>>>>>>>>>>>>>>>>>>>"
-    print base_model.__mapper__.c.deleted
-    print "<<<<<<<<<<<<<<<<<<<<<<DEFAULT>>>>>>>>>>>>>>>>>>>>"
-    print base_model.__mapper__.c.deleted.default
-
     default_deleted_value = base_model.__mapper__.c.deleted.default.arg
 
     if read_deleted == 'no':
@@ -3692,7 +3681,6 @@ def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
                     #            a best-effort mechanism.
 
         # Check for deltas that would go negative
-
         unders = [res for res, delta in deltas.items()
                   if delta < 0 and
                   delta + user_usages[res].in_use < 0]
@@ -3831,7 +3819,7 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
             elif max_age and (domain_usages[resource].updated_at -
                               timeutils.utcnow()).seconds >= max_age:
                 refresh = True
-
+            """
             # OK, refresh the usage
             if refresh:
                 # Grab the sync routine
@@ -3887,6 +3875,7 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
         #            If a project has gone over quota, we want them to
         #            be able to reduce their usage without any
         #            problems.
+        print domain_usages
         overs = [res for res, delta in deltas.items()
                  if domain_quotas[res] >= 0 and delta >= 0 and
                  (domain_quotas[res] < delta +

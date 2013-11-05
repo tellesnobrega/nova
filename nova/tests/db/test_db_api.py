@@ -130,6 +130,47 @@ def _quota_reserve(context, project_id, user_id):
                     timeutils.utcnow(), CONF.until_refresh,
                     datetime.timedelta(days=1), project_id, user_id)
 
+def _domain_quota_reserve(context, domain_id):
+    """Create sample Quota, QuotaUsage and Reservation objects.
+
+    There is no method db.quota_usage_create(), so we have to use
+    db.quota_reserve() for creating QuotaUsage objects.
+
+    Returns reservations uuids.
+
+    """
+    def get_sync(resource, usage):
+        def sync(elevated, project_id, user_id, session):
+            return {resource: usage}
+        return sync
+    domain_quotas = {}
+    user_quotas = {}
+    resources = {}
+    deltas = {}
+    for i in range(3):
+        resource = 'resource%d' % i
+        if i == 2:
+            # test for project level resources
+            resource = 'fixed_ips'
+            domain_quotas[resource] = db.domain_quota_create(context,
+                                                       domain_id, resource, i)
+        else:
+            domain_quotas[resource] = db.domain_quota_create(context,
+                                                       domain_id, resource, i)
+        sync_name = '_sync_%s' % resource
+        resources[resource] = quota.ReservableResource(
+            resource, sync_name, 'quota_res_%d' % i)
+
+        deltas[resource] = i
+
+        setattr(sqlalchemy_api, sync_name, get_sync(resource, i))
+
+        sqlalchemy_api.QUOTA_SYNC_FUNCTIONS[sync_name] = getattr(
+            sqlalchemy_api, sync_name)
+
+    return db.domain_quota_reserve(context, resources, domain_quotas,
+                                    deltas, timeutils.utcnow(), CONF.until_refresh,
+                    datetime.timedelta(days=1), domain_id)
 
 class FakeProject(object):
     def __init__(self, id, name):
@@ -1204,33 +1245,6 @@ class ReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'fixed_ips': {'reserved': 0, 'in_use': 2}}
         self.assertEqual(expected, db.quota_usage_get_all_by_project_and_user(
                                             self.ctxt, 'project1', 'user1'))
-        
-        
-class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
-
-    """Tests for db.api.reservation_* methods."""
-
-    def setUp(self):
-        super(DomainReservationTestCase, self).setUp()
-        self.ctxt = context.get_admin_context()
-        self.values = {'uuid': 'sample-uuid',
-                'domain_id': 'domain1',
-                'resource': 'resource',
-                'delta': 42,
-                'expire': timeutils.utcnow() + datetime.timedelta(days=1),
-                'usage': {'id': 1}}
-        
-    def test_reservation_expire(self):
-        self.values['expire'] = timeutils.utcnow() + datetime.timedelta(days=1)
-        _quota_reserve(self.ctxt, 'project1', 'user1')
-        db.domain_reservation_expire(self.ctxt)
-
-        expected = {'domain_id': 'domain1',
-                'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 0, 'in_use': 1},
-                'fixed_ips': {'reserved': 0, 'in_use': 2}}
-        self.assertEqual(expected, db.domain_quota_usage_get_all(
-                                            self.ctxt, 'project1', 'domain1'))
 
 
 class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
@@ -1260,11 +1274,6 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
         reservation = db.domain_reservation_create(self.ctxt, **self.values)
         reservation_db = db.domain_reservation_get(self.ctxt,
                                                    self.values['uuid'])
-<<<<<<< HEAD
-
-        print reservation, reservation_db
-=======
->>>>>>> US16 tests
         self._assertEqualObjects(reservation, reservation_db)
 
     def test_domain_reservation_get_nonexistent(self):
@@ -1272,7 +1281,6 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                           db.domain_reservation_get,
                           self.ctxt, 'non-exitent-resevation-uuid')
 
-<<<<<<< HEAD
     def test_domain_reservation_commit(self):
         reservations = _domain_quota_reserve(self.ctxt, 'domain1')
         expected = {'domain_id': 'domain1',
@@ -1322,9 +1330,11 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
 
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))
-=======
->>>>>>> US16 tests
+                'resource1': {'reserved': 0, 'in_use': 0},
+                'fixed_ips': {'reserved': 0, 'in_use': 0}}
 
+        self.assertEqual(expected, db.domain_quota_usage_get_all(
+                                            self.ctxt, 'domain1'))
 
 class SecurityGroupRuleTestCase(test.TestCase, ModelsObjectComparatorMixin):
     def setUp(self):

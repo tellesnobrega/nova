@@ -3098,6 +3098,9 @@ def quota_domain_get_default(context):
     for row in rows:
         result[row.resource] = row.hard_limit
 
+    print "<<<<<<<<<<<<<<<<<<<GET_DEFAULTS>>>>>>>>>>>>>>>>>>>>>"
+    print result
+
     return result
 
 
@@ -3736,6 +3739,7 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
                          until_refresh, max_age, domain_id=None):
     elevated = context.elevated()
     session = get_session()
+    print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<DOMAIN_QUOTA_RESERVE>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
     with session.begin():
 
         if domain_id is None:
@@ -3855,7 +3859,7 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
             for res, delta in deltas.items():
                 reservation = _domain_reservation_create(elevated,
                                                          str(uuid.uuid4()),
-                                                         user_usages[res],
+                                                         domain_usages[res],
                                                          domain_id,
                                                          res, delta, expire,
                                                          session=session)

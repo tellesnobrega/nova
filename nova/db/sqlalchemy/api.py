@@ -1677,7 +1677,7 @@ def _instance_data_get_for_user(context, project_id, user_id, session=None):
     return (result[0] or 0, result[1] or 0, result[2] or 0)
 
 
-def _instance_data_get_for_domain(context, domain_id, session=None):
+def _instance_data_get_for_domain(context, user_id, project_id, session=None):
     result = model_query(context,
                          func.count(models.Instance.id),
                          func.sum(models.Instance.vcpus),

@@ -1080,6 +1080,7 @@ def quota_get_all(context, project_id):
     """Retrieve all user quotas associated with a given project."""
     return IMPL.quota_get_all(context, project_id)
 
+
 def domain_quota_get_all(context, domain_id):
     """Retrieve all user quotas associated with a given domain."""
     return IMPL.domain_quota_get_all(context, domain_id)

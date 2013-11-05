@@ -1542,8 +1542,8 @@ class DomainQuotaDriver(object):
             quotas[resource.name] = -1
         return quotas
 
-    def _get_quotas(self, context, resources, keys, has_sync, project_id=None,
-                    user_id=None):
+    def _get_quotas(self, context, resources, keys, has_sync,
+                    domain_id=None):
         """
         A helper method which retrieves the quotas for the specific
         resources identified by keys, and which apply to the current
@@ -1589,7 +1589,7 @@ class DomainQuotaDriver(object):
                                         domain_id, context.quota_class,
                                         usages=False)
 
-        return dict((k, v['limit']) for k, v in quotas.items())
+        return dict((k, v['limit']) for k, v in domain_quotas.items())
 
     def get_domain_quotas(self, context, resources, domain_id,
                            quota_class=None, defaults=True,
@@ -1653,11 +1653,10 @@ class DomainQuotaDriver(object):
                         will be returned.
         """
         domain_id = context.domain_id
-        domain_quotas = db.quota_get_all_by_domain(context, domain_id)(context, project_id)
+        domain_quotas = db.quota_get_all_by_domain(context, domain_id)
         domain_usages = None
         if usages:
             domain_usages = db.domain_quota_usage_get_all(context, domain_id)
-
 
         return self._process_quotas(context, resources, domain_id,
                                     domain_quotas, quota_class,
@@ -1710,7 +1709,6 @@ class DomainQuotaDriver(object):
                             quota.hard_limit
 
         return modified_quotas
-
 
     def get_settable_quotas(self, context, resources, project_id,
                             user_id=None):
@@ -1774,9 +1772,14 @@ class DomainQuotaDriver(object):
         if unders:
             raise exception.InvalidQuotaValue(unders=sorted(unders))
 
-        # If domain_id is None, then we use the project_id in context
-        if domain_id is None:
-            domain_id = context.domain_id
+        domain_id = context.domain_id
+
+        # If project_id is None, then we use the project_id in context
+        if project_id is None:
+            project_id = context.project_id
+        # If user id is None, then we use the user_id in context
+        if user_id is None:
+            user_id = context.user_id
 
         # Get the applicable quotas
         quotas = self._get_quotas(context, resources, values.keys(),
@@ -1842,14 +1845,6 @@ class DomainQuotaDriver(object):
         if not isinstance(expire, datetime.datetime):
             raise exception.InvalidReservationExpiration(expire=expire)
 
-        # endpoint = "http://keystone:35357/v2.0"
-        # admin_token = context.auth_token
-
-        # keystone = ksclient.Client(endpoint=endpoint, token=admin_token)
-        # domain_id = v3_keystoneclient_instance.projects.get(project_id).domain_id
-        # tenants = keystone.tenants.list()
-        # TODO
-
         domain_id = context.domain_id
         # If project_id is None, then we use the project_id in context
         if project_id is None:
@@ -1862,8 +1857,8 @@ class DomainQuotaDriver(object):
         # NOTE(Vek): We're not worried about races at this point.
         #            Yes, the admin may be in the process of reducing
         #            quotas, but that's a pretty rare thing.
-        quotas = self._get_quotas(context, resources, deltas.keys(),
-                                  has_sync=True, domain_id=domain_id)
+        domain_quotas = self._get_quotas(context, resources, deltas.keys(),
+                                         has_sync=True, domain_id=domain_id)
 
         # NOTE(Vek): Most of the work here has to be done in the DB
         #            API, because we have to do it in a transaction,

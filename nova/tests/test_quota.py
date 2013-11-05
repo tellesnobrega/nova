@@ -1003,7 +1003,6 @@ class DomainQuotaDriverTestCase(test.TestCase):
                                            quota.QUOTAS._resources,
                                            dict(instances=2),
                                            expire=expire_delta)
-                                           dict(instances=2), expire=expire_delta)
 
         expire = timeutils.utcnow() + expire_delta
         self.assertEqual(self.calls, [

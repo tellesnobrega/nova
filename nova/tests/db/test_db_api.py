@@ -145,7 +145,6 @@ def _domain_quota_reserve(context, domain_id):
             return {resource: usage}
         return sync
     domain_quotas = {}
-    user_quotas = {}
     resources = {}
     deltas = {}
     for i in range(3):

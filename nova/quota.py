@@ -2999,6 +2999,9 @@ class QuotaEngine(object):
                                 user_id=user_id)
             self._driver_domain.commit(context, reservations,
                                        project_id=project_id,
+                                       user_id=user_id)
+            self._driver.commit(context, project_reservations,
+                                project_id=project_id,
                                 user_id=user_id)
         except Exception:
             # NOTE(Vek): Ignoring exceptions here is safe, because the
@@ -3035,6 +3038,9 @@ class QuotaEngine(object):
                                   user_id=user_id)
             self._driver_domain.rollback(context, reservations,
                                          project_id=project_id,
+                                         user_id=user_id)
+            self._driver.rollback(context, project_reservations,
+                                  project_id=project_id,
                                   user_id=user_id)
         except Exception:
             # NOTE(Vek): Ignoring exceptions here is safe, because the

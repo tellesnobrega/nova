@@ -785,7 +785,7 @@ class QuotaEngineTestCase(test.TestCase):
         quota_obj = self._make_quota_obj(driver)
         quota_obj.expire(context)
 
-        self.assertEqual(driver.called, [
+        self.assertEqual(driver.called, [('expire', context),
                 ('expire', context),
                 ])
 
@@ -973,6 +973,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
                                            quota.QUOTAS._resources,
                                            dict(instances=2),
                                             expire=expire)
+
 
 class DbQuotaDriverTestCase(test.TestCase):
     def setUp(self):

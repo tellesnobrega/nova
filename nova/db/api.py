@@ -1232,6 +1232,12 @@ def reservation_rollback(context, reservations, project_id=None, user_id=None):
                                      user_id=user_id)
 
 
+def domain_reservation_rollback(context, reservations, domain_id):
+    """Roll back domain quota reservations."""
+    return IMPL.domain_reservation_rollback(context, reservations,
+                                            domain_id=domain_id)
+
+
 def quota_destroy_all_by_project_and_user(context, project_id, user_id):
     """Destroy all quotas associated with a given project and user."""
     return IMPL.quota_destroy_all_by_project_and_user(context,

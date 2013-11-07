@@ -26,6 +26,7 @@ import threading
 import time
 import uuid
 
+
 from oslo.config import cfg
 from oslo.db import exception as db_exc
 from oslo.db.sqlalchemy import session as db_session
@@ -3204,6 +3205,7 @@ def _domain_quota_usage_get_all(context, domain_id, user_id=None):
     nova.context.authorize_domain_context(context, domain_id)
     query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
                    filter_by(domain_id=domain_id)
+
     result = {'domain_id': domain_id}
     rows = query.all()
     for row in rows:
@@ -3212,8 +3214,7 @@ def _domain_quota_usage_get_all(context, domain_id, user_id=None):
             result[row.resource]['reserved'] += row.reserved
         else:
             result[row.resource] = dict(in_use=row.in_use,
-                                        reserved=row.reserved)
-
+                                        reserved=row.reserved) 
     return result
 
 
@@ -3582,18 +3583,7 @@ def _get_domain_quota_usages(context, session, domain_id):
                    filter_by(domain_id=domain_id).\
                    with_lockmode('update').\
                    all()
-    result = dict()
-    # Get the total count of in_use,reserved
-    for row in rows:
-        if row.resource in result:
-            result[row.resource]['in_use'] += row.in_use
-            result[row.resource]['reserved'] += row.reserved
-            result[row.resource]['total'] += (row.in_use + row.reserved)
-        else:
-            result[row.resource] = dict(in_use=row.in_use,
-                                        reserved=row.reserved,
-                                        total=row.in_use + row.reserved)
-    return result
+    return dict((row.resource, row) for row in rows)
 
 
 @require_context
@@ -3731,6 +3721,17 @@ def _quota_reservations_query(session, context, reservations):
                    with_lockmode('update')
 
 
+def _domain_quota_reservations_query(session, context, reservations):
+    """Return the relevant domain reservations."""
+
+    # Get the listed reservations
+    return model_query(context, models.DomainReservation,
+                       read_deleted="no",
+                       session=session).\
+                   filter(models.DomainReservation.uuid.in_(reservations)).\
+                   with_lockmode('update')
+
+
 @require_context
 @_retry_on_deadlock
 def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
@@ -3771,6 +3772,7 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
             elif max_age and (domain_usages[resource].updated_at -
                               timeutils.utcnow()).seconds >= max_age:
                 refresh = True
+
             """
             # OK, refresh the usage
             if refresh:
@@ -3895,17 +3897,6 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
     return reservations
 
 
-def _domain_quota_reservations_query(session, context, reservations):
-    """Return the relevant reservations."""
-
-    # Get the listed reservations
-    return model_query(context, models.Reservation,
-                       read_deleted="no",
-                       session=session).\
-                   filter(models.Reservation.uuid.in_(reservations)).\
-                   with_lockmode('update')
-
-
 @require_context
 def reservation_commit(context, reservations, project_id=None, user_id=None):
     session = get_session()
@@ -3935,6 +3926,21 @@ def reservation_rollback(context, reservations, project_id=None, user_id=None):
             usage = user_usages[reservation.resource]
             if reservation.delta >= 0:
                 usage.reserved -= reservation.delta
+        reservation_query.soft_delete(synchronize_session=False)
+
+
+@require_context
+def domain_reservation_rollback(context, reservations, domain_id):
+    session = get_session()
+    with session.begin():
+        usages = _get_domain_quota_usages(context, session, domain_id)
+        reservation_query = _domain_quota_reservations_query(session, context,
+                                                      reservations)
+        for reservation in reservation_query.all():
+            usage = usages[reservation.resource]
+            if reservation.delta >= 0:
+                usage.reserved -= reservation.delta
+
         reservation_query.soft_delete(synchronize_session=False)
 
 

@@ -1789,10 +1789,8 @@ class DomainQuotaDriver(object):
         # Get the applicable quotas
         quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, domain_id=domain_id)
-
         user_quotas = self._get_quotas(context, resources, values.keys(),
                                        has_sync=False, domain_id=domain_id,)
-
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
         overs = [key for key, val in values.items()
@@ -2999,7 +2997,7 @@ class QuotaEngine(object):
             self._driver.commit(context, project_reservations,
                                 project_id=project_id,
                                 user_id=user_id)
-            self._driverDomain.commit(context, reservations,
+            self._driver_domain.commit(context, reservations,
                                        project_id=project_id,
                                 user_id=user_id)
         except Exception:
@@ -3035,7 +3033,7 @@ class QuotaEngine(object):
             self._driver.rollback(context, project_reservations,
                                   project_id=project_id,
                                   user_id=user_id)
-            self._driverDomain.rollback(context, reservations,
+            self._driver_domain.rollback(context, reservations,
                                          project_id=project_id,
                                   user_id=user_id)
         except Exception:

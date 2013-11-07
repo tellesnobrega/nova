@@ -80,9 +80,16 @@ class QuotaClassSetsTest(test.TestCase):
         req = fakes.HTTPRequest.blank(
             '/v2/fake4/os-quota-class-sets/test_class',
             use_admin_context=True)
+
+        print "<<<<<<<<<<<<<REQ>>>>>>>>>>>>>"
+        print req
         res_dict = self.controller.show(req, 'test_class')
 
+        print "<<<<<<<<<<<<RESP>>>>>>>>>>>>>"
+        print res_dict
+
         self.assertEqual(res_dict, quota_set('test_class'))
+        self.assertTrue(False)
 
     def test_quotas_show_as_unauthorized_user(self):
         req = fakes.HTTPRequest.blank(

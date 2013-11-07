@@ -169,7 +169,7 @@ class DbQuotaDriver(object):
                         quota_class=None, defaults=True, usages=None,
                         remains=False):
         modified_quotas = {}
-        # Get the quotas for the appropriate class.  If the project ID
+        # Get the quotas for the appropriate class.  If the domain ID
         # matches the one in the context, we use the quota_class from
         # the context, otherwise, we use the provided quota_class (if
         # any)
@@ -1561,12 +1561,9 @@ class DomainQuotaDriver(object):
                          have a sync function; if False, indicates
                          that the resource must NOT have a sync
                          function.
-        :param project_id: Specify the project_id if current context
+        :param domain_id: Specify the domain_id if current context
                            is admin and admin wants to impact on
                            common user's tenant.
-        :param user_id: Specify the user_id if current context
-                        is admin and admin wants to impact on
-                        common user.
         """
 
         # Filter resources
@@ -1607,8 +1604,8 @@ class DomainQuotaDriver(object):
         :param resources: A dictionary of the registered resources.
         :param domain_id: The ID of the domain to return quotas for.
         :param quota_class: If domain_id != context.domain_id, the
-                            quota class cannot be determined.  This
-                            parameter allows it to be specified.  It
+                            quota class cannot be determined. This
+                            parameter allows it to be specified. It
                             will be ignored if domain_id ==
                             context.domain_id.
         :param defaults: If True, the quota class value (or the
@@ -1767,9 +1764,12 @@ class DomainQuotaDriver(object):
         :param resources: A dictionary of the registered resources.
         :param values: A dictionary of the values to check against the
                        quota.
-        :param domain_id: Specify the domain_id if current context
+        :param project_id: Specify the project_id if current context
                            is admin and admin wants to impact on
                            common user's tenant.
+        :param user_id: Specify the user_id if current context
+                        is admin and admin wants to impact on
+                        common user.
         """
 
         # Ensure no value is less than zero

@@ -84,6 +84,7 @@ class QuotaClassSetsTest(test.TestCase):
         res_dict = self.controller.show(req, 'test_class')
 
         self.assertEqual(res_dict, quota_set('test_class'))
+        self.assertTrue(False)
 
     def test_quotas_show_as_unauthorized_user(self):
         req = fakes.HTTPRequest.blank(

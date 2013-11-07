@@ -25,6 +25,7 @@ import threading
 import time
 import uuid
 
+
 from oslo.config import cfg
 from oslo.db import exception as db_exc
 from oslo.db.sqlalchemy import session as db_session
@@ -3200,6 +3201,7 @@ def _domain_quota_usage_get_all(context, domain_id, user_id=None):
     nova.context.authorize_domain_context(context, domain_id)
     query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
                    filter_by(domain_id=domain_id)
+
     result = {'domain_id': domain_id}
     rows = query.all()
     for row in rows:
@@ -3610,18 +3612,7 @@ def _get_domain_quota_usages(context, session, domain_id):
                    filter_by(domain_id=domain_id).\
                    with_lockmode('update').\
                    all()
-    result = dict()
-    # Get the total count of in_use,reserved
-    for row in rows:
-        if row.resource in result:
-            result[row.resource]['in_use'] += row.in_use
-            result[row.resource]['reserved'] += row.reserved
-            result[row.resource]['total'] += (row.in_use + row.reserved)
-        else:
-            result[row.resource] = dict(in_use=row.in_use,
-                                        reserved=row.reserved,
-                                        total=row.in_use + row.reserved)
-    return result
+    return dict((row.resource, row) for row in rows)
 
 
 @require_context
@@ -3819,6 +3810,7 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
             elif max_age and (domain_usages[resource].updated_at -
                               timeutils.utcnow()).seconds >= max_age:
                 refresh = True
+
             """
             # OK, refresh the usage
             if refresh:
@@ -3930,17 +3922,6 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
                                   usages=usages)
 
     return reservations
-
-
-def _domain_quota_reservations_query(session, context, reservations):
-    """Return the relevant reservations."""
-
-    # Get the listed reservations
-    return model_query(context, models.Reservation,
-                       read_deleted="no",
-                       session=session).\
-                   filter(models.Reservation.uuid.in_(reservations)).\
-                   with_lockmode('update')
 
 
 @require_context

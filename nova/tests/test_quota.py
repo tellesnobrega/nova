@@ -1021,6 +1021,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
                                            dict(instances=2),
                                            expire=expire)
 
+
 class DbQuotaDriverTestCase(test.TestCase):
     def setUp(self):
         super(DbQuotaDriverTestCase, self).setUp()

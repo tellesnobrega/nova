@@ -1904,7 +1904,8 @@ class DomainQuotaDriver(object):
                         is admin and admin wants to impact on
                         common user.
         """
-        pass
+        domain_id = context.domain_id
+        db.domain_reservation_rollback(context, reservations, domain_id)
 
     def usage_reset(self, context, resources):
         """

@@ -89,7 +89,7 @@ quota_opts = [
                help='Number of seconds between subsequent usage refreshes'),
     cfg.StrOpt('quota_driver',
                default='nova.quota.DbQuotaDriver',
-               help='default driver to use for quota checks'),
+               help='default driver to use for project quota checks'),
     cfg.StrOpt('domain_quota_driver',
                default='nova.quota.DomainQuotaDriver',
                help='default driver to use for domain quota checks'),
@@ -977,10 +977,8 @@ class DomainQuotaDriver(object):
         # Get the applicable quotas
         quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, domain_id=domain_id)
-
         user_quotas = self._get_quotas(context, resources, values.keys(),
                                        has_sync=False, domain_id=domain_id,)
-
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
         overs = [key for key, val in values.items()
@@ -1912,14 +1910,11 @@ class QuotaEngine(object):
         return self.__driver
 
     @property
-    def _driverDomain(self):
+    def _driver_domain(self):
         if self.__domain_driver:
             return self.__domain_driver
-        if not self._driver_cls:
-            self._driver_cls = CONF.domain_quota_driver
-        if isinstance(self._driver_cls, basestring):
-            self._driver_cls = importutils.import_object(self._driver_cls)
-        self.__domain_driver = self._driver_cls
+        domain_quota_cls = CONF.domain_quota_driver
+        self.__domain_driver = importutils.import_object(domain_quota_cls)
         return self.__domain_driver
 
     def __contains__(self, resource):
@@ -2182,7 +2177,7 @@ class QuotaEngine(object):
         try:
             self._driver.commit(context, reservations, project_id=project_id,
                                 user_id=user_id)
-            self._driverDomain.commit(context, reservations,
+            self._driver_domain.commit(context, reservations,
                                        project_id=project_id,
                                 user_id=user_id)
         except Exception:
@@ -2208,7 +2203,7 @@ class QuotaEngine(object):
         try:
             self._driver.rollback(context, reservations, project_id=project_id,
                                   user_id=user_id)
-            self._driverDomain.rollback(context, reservations,
+            self._driver_domain.rollback(context, reservations,
                                          project_id=project_id,
                                   user_id=user_id)
         except Exception:
@@ -2267,7 +2262,7 @@ class QuotaEngine(object):
 
         :param context: The request context, for access checks.
         """
-        self._driverDomain.expire(context)
+        self._driver_domain.expire(context)
         self._driver.expire(context)
 
     @property

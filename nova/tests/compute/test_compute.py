@@ -4197,7 +4197,7 @@ class ComputeTestCase(BaseTestCase):
 
     def _ensure_quota_reservations_committed(self, instance):
         """Mock up commit of quota reservations."""
-        reservations = list('fake_res')
+        reservations = {'project': list('fake_res')}
         self.mox.StubOutWithMock(nova.quota.QUOTAS, 'commit')
         nova.quota.QUOTAS.commit(mox.IgnoreArg(), reservations,
                                  project_id=instance['project_id'],

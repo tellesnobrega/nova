@@ -2154,10 +2154,19 @@ class QuotaEngine(object):
                            common user's tenant.
         """
 
-        reservations = self._driver.reserve(context, self._resources, deltas,
-                                            expire=expire,
-                                            project_id=project_id,
-                                            user_id=user_id)
+        domain_reservations = self._driver.reserve(context, self._resources,
+                                                   deltas, expire=expire,
+                                                   project_id=project_id,
+                                                   user_id=user_id)
+        project_reservations = self._driver.reserve(context, self._resources,
+                                                    deltas, expire=expire,
+                                                    project_id=project_id,
+                                                    user_id=user_id)
+
+        reservations = {
+                        'domain': domain_reservations,
+                        'project': project_reservations
+                       }
 
         LOG.debug("Created reservations %s", reservations)
 
@@ -2174,11 +2183,18 @@ class QuotaEngine(object):
                            common user's tenant.
         """
 
+        if not reservations:
+            return
+
+        domain_reservations = reservations.get('domain')
+        project_reservations = reservations.get('project')
+
         try:
-            self._driver.commit(context, reservations, project_id=project_id,
-                                user_id=user_id)
-            self._driver_domain.commit(context, reservations,
+            self._driver_domain.commit(context, domain_reservations,
                                        project_id=project_id,
+                                       user_id=user_id)
+            self._driver.commit(context, project_reservations,
+                                project_id=project_id,
                                 user_id=user_id)
         except Exception:
             # NOTE(Vek): Ignoring exceptions here is safe, because the
@@ -2200,11 +2216,18 @@ class QuotaEngine(object):
                            common user's tenant.
         """
 
+        if not reservations:
+            return
+
+        domain_reservations = reservations.get('domain')
+        project_reservations = reservations.get('project')
+
         try:
-            self._driver.rollback(context, reservations, project_id=project_id,
-                                  user_id=user_id)
-            self._driver_domain.rollback(context, reservations,
+            self._driver_domain.rollback(context, domain_reservations,
                                          project_id=project_id,
+                                         user_id=user_id)
+            self._driver.rollback(context, project_reservations,
+                                  project_id=project_id,
                                   user_id=user_id)
         except Exception:
             # NOTE(Vek): Ignoring exceptions here is safe, because the

@@ -132,7 +132,6 @@ def _domain_quota_reserve(context, domain_id):
             return {resource: usage}
         return sync
     domain_quotas = {}
-    user_quotas = {}
     resources = {}
     deltas = {}
     for i in range(3):
@@ -1214,6 +1213,25 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertRaises(exception.ReservationNotFound,
                           db.domain_reservation_get,
                           self.ctxt, 'non-exitent-resevation-uuid')
+
+    def test_domain_reservation_commit(self):
+        reservations = _domain_quota_reserve(self.ctxt, 'domain1')
+        expected = {'domain_id': 'domain1',
+                'resource0': {'reserved': 0, 'in_use': 0},
+                'resource1': {'reserved': 1, 'in_use': 0},
+                'fixed_ips': {'reserved': 2, 'in_use': 0}}
+        self.assertEqual(expected, db.domain_quota_usage_get_all(
+                                            self.ctxt, 'domain1'))
+        db.domain_reservation_get(self.ctxt, reservations[0])
+        db.domain_reservation_commit(self.ctxt, reservations, 'domain1')
+        self.assertRaises(exception.ReservationNotFound,
+            db.domain_reservation_get, self.ctxt, reservations[0])
+        expected = {'domain_id': 'domain1',
+                'resource0': {'reserved': 0, 'in_use': 0},
+                'resource1': {'reserved': 0, 'in_use': 1},
+                'fixed_ips': {'reserved': 0, 'in_use': 2}}
+        self.assertEqual(expected, db.domain_quota_usage_get_all(
+                                            self.ctxt, 'domain1'))
 
     def test_domain_reservation_rollback(self):
         reservations = _domain_quota_reserve(self.ctxt, 'domain1')

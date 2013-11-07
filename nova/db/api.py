@@ -1225,6 +1225,12 @@ def reservation_commit(context, reservations, project_id=None, user_id=None):
                                    user_id=user_id)
 
 
+def domain_reservation_commit(context, reservations, domain_id):
+    """Commit domain quota reservations."""
+    return IMPL.domain_reservation_commit(context, reservations,
+                                            domain_id=domain_id)
+
+
 def reservation_rollback(context, reservations, project_id=None, user_id=None):
     """Roll back quota reservations."""
     return IMPL.reservation_rollback(context, reservations,

@@ -731,7 +731,10 @@ class QuotaEngineTestCase(test.TestCase):
         quota_obj = self._make_quota_obj(driver)
         quota_obj.commit(context, ['resv-01', 'resv-02', 'resv-03'])
 
-        self.assertEqual(driver.called, [
+        self.assertEqual(driver.called, [('commit', context,
+                                           ['resv-01', 'resv-02', 'resv-03'],
+                                            None,
+                 None),
                 ('commit', context, ['resv-01', 'resv-02', 'resv-03'], None,
                  None),
                 ])
@@ -743,6 +746,8 @@ class QuotaEngineTestCase(test.TestCase):
         quota_obj.rollback(context, ['resv-01', 'resv-02', 'resv-03'])
 
         self.assertEqual(driver.called, [
+                ('rollback', context, ['resv-01', 'resv-02', 'resv-03'], None,
+                 None),
                 ('rollback', context, ['resv-01', 'resv-02', 'resv-03'], None,
                  None),
                 ])

@@ -1092,7 +1092,10 @@ class DomainQuotaDriver(object):
                         is admin and admin wants to impact on
                         common user.
         """
-        pass
+        domain_id = context.domain_id
+
+        db.domain_reservation_commit(context,
+                                      reservations, domain_id=domain_id)
 
     def rollback(self, context, reservations, project_id=None, user_id=None):
         """Roll back reservations.
@@ -2179,6 +2182,9 @@ class QuotaEngine(object):
         try:
             self._driver.commit(context, reservations, project_id=project_id,
                                 user_id=user_id)
+            self._driverDomain.commit(context, reservations,
+                                       project_id=project_id,
+                                user_id=user_id)
         except Exception:
             # NOTE(Vek): Ignoring exceptions here is safe, because the
             # usage resynchronization and the reservation expiration
@@ -2201,6 +2207,9 @@ class QuotaEngine(object):
 
         try:
             self._driver.rollback(context, reservations, project_id=project_id,
+                                  user_id=user_id)
+            self._driverDomain.rollback(context, reservations,
+                                         project_id=project_id,
                                   user_id=user_id)
         except Exception:
             # NOTE(Vek): Ignoring exceptions here is safe, because the

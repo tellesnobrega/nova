@@ -3214,7 +3214,7 @@ def _domain_quota_usage_get_all(context, domain_id, user_id=None):
             result[row.resource]['reserved'] += row.reserved
         else:
             result[row.resource] = dict(in_use=row.in_use,
-                                        reserved=row.reserved) 
+                                        reserved=row.reserved)
     return result
 
 
@@ -3915,6 +3915,21 @@ def reservation_commit(context, reservations, project_id=None, user_id=None):
 
 @require_context
 @_retry_on_deadlock
+def domain_reservation_commit(context, reservations, domain_id):
+    session = get_session()
+    with session.begin():
+        usages = _get_domain_quota_usages(context, session, domain_id)
+        reservation_query = _domain_quota_reservations_query(session, context,
+                                                      reservations)
+        for reservation in reservation_query.all():
+            usage = usages[reservation.resource]
+            if reservation.delta >= 0:
+                usage.reserved -= reservation.delta
+            usage.in_use += reservation.delta
+        reservation_query.soft_delete(synchronize_session=False)
+
+
+@require_context
 def reservation_rollback(context, reservations, project_id=None, user_id=None):
     session = get_session()
     with session.begin():

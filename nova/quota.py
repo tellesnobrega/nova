@@ -1346,6 +1346,13 @@ class NoopQuotaDriver(object):
         if unders:
             raise exception.InvalidQuotaValue(unders=sorted(unders))
 
+        # If project_id is None, then we use the project_id in context
+        if project_id is None:
+            project_id = context.project_id
+        # If user id is None, then we use the user_id in context
+        if user_id is None:
+            user_id = context.user_id
+
         # Get the applicable quotas
         project_quotas = db.quota_get_all_by_project(context, project_id)
         quotas = self._get_quotas(context, resources, values.keys(),

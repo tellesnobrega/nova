@@ -459,6 +459,8 @@ class DbQuotaDriver(object):
         overs = [key for key, val in values.items()
                  if quotas[key] >= 0 and quotas[key] < val or
                  (user_quotas[key] >= 0 and user_quotas[key] < val)]
+                                  has_sync=False, project_id=project_id)
+
         if overs:
             headroom = {}
             for key in overs:
@@ -915,22 +917,6 @@ class DomainQuotaDriver(object):
             quotas[resource.name].update(minimum=0, maximum=-1)
         return quotas
 
-    def limit_check_absolute(self, context, resources, values, domain_id=None):
-        unders = [key for key, val in values.items() if val < 0]
-        if unders:
-            raise exception.InvalidQuotaValue(unders=sorted(unders))
-        # If domain_id is None, then we use the domain_id in context
-        if domain_id is None:
-            domain_id = context.domain_id
-
-        quotas = self._get_quotas(context, resources, values.keys(),
-                                  has_sync=False, domain_id=domain_id)
-        overs = [key for key, val in values.items()
-                 if (quotas[key] >= 0 and quotas[key] < val)]
-        if overs:
-            raise exception.OverQuota(overs=sorted(overs), quotas=quotas,
-                                      usages={})
-
     def limit_check(self, context, resources, values, project_id=None,
                     user_id=None):
         """Check simple quota limits.
@@ -970,7 +956,7 @@ class DomainQuotaDriver(object):
         # Get the applicable quotas
         domain_quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, domain_id=domain_id)
-        
+
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
         overs = [key for key, val in values.items()

@@ -25,7 +25,6 @@ import threading
 import time
 import uuid
 
-
 from oslo.config import cfg
 from oslo.db import exception as db_exc
 from oslo.db.sqlalchemy import session as db_session
@@ -3811,7 +3810,6 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
                               timeutils.utcnow()).seconds >= max_age:
                 refresh = True
 
-            """
             # OK, refresh the usage
             if refresh:
                 # Grab the sync routine
@@ -3867,7 +3865,6 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
         #            If a project has gone over quota, we want them to
         #            be able to reduce their usage without any
         #            problems.
-        print domain_usages
         overs = [res for res, delta in deltas.items()
                  if domain_quotas[res] >= 0 and delta >= 0 and
                  (domain_quotas[res] < delta +

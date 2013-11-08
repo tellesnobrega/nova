@@ -131,6 +131,12 @@ def _quota_reserve(context, project_id, user_id):
                     datetime.timedelta(days=1), project_id, user_id)
 
 
+class FakeProject(object):
+    def __init__(self, id, name):
+        self.id = id
+        self.name = name
+
+
 def _domain_quota_reserve(context, domain_id):
     """Create sample Quota, QuotaUsage and Reservation objects.
 
@@ -170,7 +176,9 @@ def _domain_quota_reserve(context, domain_id):
 
     return db.domain_quota_reserve(context, resources, domain_quotas,
                     deltas, timeutils.utcnow(), CONF.until_refresh,
-                    datetime.timedelta(days=1), domain_id)
+                    datetime.timedelta(days=1),
+                    [FakeProject("fake_project", "fake_project")],
+                    domain_id)
 
 class FakeProject(object):
     def __init__(self, id, name):
@@ -1322,11 +1330,6 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'resource0': {'reserved': 0, 'in_use': 0},
                 'resource1': {'reserved': 0, 'in_use': 1},
                 'fixed_ips': {'reserved': 0, 'in_use': 2}}
-
-        self.assertEqual(expected, db.domain_quota_usage_get_all(
-                                            self.ctxt, 'domain1'))
-                'resource1': {'reserved': 0, 'in_use': 0},
-                'fixed_ips': {'reserved': 0, 'in_use': 0}}
 
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))

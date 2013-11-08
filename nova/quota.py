@@ -1892,10 +1892,23 @@ class DomainQuotaDriver(object):
         #            session isn't available outside the DBAPI, we
         #            have to do the work there.
 
+        project_list = None
+        if hasattr(context, "service_catalog"):
+            auth_url = None
+            for service in context.service_catalog:
+                if service['name'] == 'keystone':
+                    auth_url = service['endpoints'][0]['adminURL']
+
+            keystone = client.Client(token=context.auth_token,
+                                     auth_url=auth_url,
+                                     tenant_id=context.project_id)
+
+            project_list = keystone.projects.list(domain=context.domain_id)
+
         return db.domain_quota_reserve(context, resources, domain_quotas,
                                        deltas, expire,
                                        CONF.until_refresh, CONF.max_age,
-                                       domain_id=domain_id)
+                                       project_list, domain_id=domain_id)
 
     def commit(self, context, reservations, project_id=None, user_id=None):
         """Commit reservations.

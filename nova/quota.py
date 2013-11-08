@@ -1889,8 +1889,8 @@ class DomainQuotaDriver(object):
         """
         domain_id = context.domain_id
 
-        db.domain_reservation_commit(context,
-                                      reservations, domain_id=domain_id)
+        db.domain_reservation_commit(context, reservations,
+                                     domain_id=domain_id)
 
     def rollback(self, context, reservations, project_id=None, user_id=None):
         """Roll back reservations.

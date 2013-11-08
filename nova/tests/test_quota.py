@@ -728,6 +728,18 @@ class QuotaEngineTestCase(test.TestCase):
                         test_resource2=2,
                         test_resource3=3,
                         test_resource4=4,
+                        ), 3600, None, None),
+                ('reserve', context, quota_obj._resources, dict(
+                        test_resource1=1,
+                        test_resource2=2,
+                        test_resource3=3,
+                        test_resource4=4,
+                        ), None, 'fake_project', None),
+                ('reserve', context, quota_obj._resources, dict(
+                        test_resource1=1,
+                        test_resource2=2,
+                        test_resource3=3,
+                        test_resource4=4,
                         ), None, 'fake_project', None),
                 ('reserve', context, quota_obj._resources, dict(
                         test_resource1=1,

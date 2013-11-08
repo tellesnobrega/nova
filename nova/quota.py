@@ -1894,7 +1894,7 @@ class QuotaEngine(object):
         if self.__domain_driver:
             return self.__domain_driver
         if not self._d_driver_cls:
-            self._d_driver_cls = CONF.quota_driver
+            self._d_driver_cls = CONF.domain_quota_driver
         if isinstance(self._d_driver_cls, basestring):
             self._d_driver_cls = importutils.import_object(self._d_driver_cls)
         self.__domain_driver = self._d_driver_cls

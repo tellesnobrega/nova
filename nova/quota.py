@@ -449,6 +449,7 @@ class DbQuotaDriver(object):
         quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, project_id=project_id,
                                   project_quotas=project_quotas)
+
         user_quotas = self._get_quotas(context, resources, values.keys(),
                                        has_sync=False, project_id=project_id,
                                        user_id=user_id,

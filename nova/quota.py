@@ -1047,6 +1047,7 @@ class DomainQuotaDriver(object):
         #            have to do the work there.
 
         project_list = []
+
         if (hasattr(context, "service_catalog")
                 and context.service_catalog != []):
             auth_url = None

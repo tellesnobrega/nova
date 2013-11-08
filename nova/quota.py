@@ -693,6 +693,7 @@ class DomainQuotaDriver(object):
         """
 
         quotas = {}
+
         default_quotas = db.quota_domain_get_default(context)
         for resource in resources.values():
             quotas[resource.name] = default_quotas.get(resource.name,

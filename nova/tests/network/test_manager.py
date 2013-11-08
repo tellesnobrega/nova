@@ -1180,7 +1180,8 @@ class VlanNetworkTestCase(test.TestCase):
         self.network._floating_ip_owned_by_project(ctxt, floating_ip)
 
     def test_allocate_floating_ip(self):
-        ctxt = context.RequestContext('testuser', 'testproject',
+        ctxt = context.RequestContext('testuser', 'testproject', 
+                                      'testdomain',
                                       is_admin=False)
 
         def fake_allocate_address(*args, **kwargs):

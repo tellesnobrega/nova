@@ -247,7 +247,7 @@ class ApiEc2TestCase(test.TestCase):
         self.host = '127.0.0.1'
         # NOTE(vish): skipping the Authorizer
         roles = ['sysadmin', 'netadmin']
-        ctxt = context.RequestContext('fake', 'fake', roles=roles)
+        ctxt = context.RequestContext('fake', 'fake', 'fake', roles=roles)
         self.app = auth.InjectContext(ctxt, ec2.FaultWrapper(
                 ec2.RequestLogging(ec2.Requestify(ec2.Authorizer(ec2.Executor()
                                ), 'nova.api.ec2.cloud.CloudController'))))

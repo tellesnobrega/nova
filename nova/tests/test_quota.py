@@ -47,10 +47,12 @@ class QuotaIntegrationTestCase(test.TestCase):
         # Apparently needed by the RPC tests...
         self.network = self.start_service('network')
 
+        self.domain_id = 'admin'
         self.user_id = 'admin'
         self.project_id = 'admin'
         self.context = context.RequestContext(self.user_id,
                                               self.project_id,
+                                              self.domain_id,
                                               is_admin=True)
 
         nova.tests.image.fake.stub_out_image_service(self.stubs)

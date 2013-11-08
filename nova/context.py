@@ -218,6 +218,10 @@ def authorize_project_context(context, project_id):
 
 def authorize_domain_context(context, domain_id):
     """Ensures a request has permission to access the given project."""
+    print '<<<<<<<<<<<<<<<<<context>>>>>>>>>>>>>>>>'
+    print context.domain_id
+    print '<<<<<<<<<<<<<<<<<domain_id>>>>>>>>>>>>>.'
+    print domain_id
     if is_user_context(context):
         if not context.domain_id:
             raise exception.NotAuthorized()

@@ -120,7 +120,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
                 'filter_properties': 'fake_props',
                 'instance': fake_instance,
                 'instance_type': 'fake_type',
-                'reservations': list('fake_res'),
+                'reservations': {'project': list('fake_res')},
         }
         self.manager.driver.select_destinations(
             self.context, request_spec, 'fake_props').AndRaise(
@@ -155,7 +155,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
                 'filter_properties': 'fake_props',
                 'instance': fake_instance,
                 'instance_type': 'fake_type',
-                'reservations': list('fake_res'),
+                'reservations': {'project': list('fake_res')},
         }
         self.manager.driver.select_destinations(
             self.context, request_spec, 'fake_props').AndRaise(
@@ -190,7 +190,7 @@ class SchedulerManagerTestCase(test.NoDBTestCase):
                 'filter_properties': 'fake_props',
                 'instance': fake_instance,
                 'instance_type': 'fake_type',
-                'reservations': list('fake_res'),
+                'reservations': {'project': list('fake_res')},
         }
 
         self.manager.driver.select_destinations(

@@ -1092,8 +1092,8 @@ class DomainQuotaDriver(object):
         """
         domain_id = context.domain_id
 
-        db.domain_reservation_commit(context,
-                                      reservations, domain_id=domain_id)
+        db.domain_reservation_commit(context, reservations,
+                                     domain_id=domain_id)
 
     def rollback(self, context, reservations, project_id=None, user_id=None):
         """Roll back reservations.
@@ -1891,9 +1891,10 @@ class CountableResource(AbsoluteResource):
 class QuotaEngine(object):
     """Represent the set of recognized quotas."""
 
-    def __init__(self, quota_driver_class=None):
+    def __init__(self, quota_driver_class=None, domain_driver_class=None):
         """Initialize a Quota object."""
         self._resources = {}
+        self._d_driver_cls = domain_driver_class
         self._driver_cls = quota_driver_class
         self.__domain_driver = None
         self.__driver = None
@@ -1913,8 +1914,11 @@ class QuotaEngine(object):
     def _driver_domain(self):
         if self.__domain_driver:
             return self.__domain_driver
-        domain_quota_cls = CONF.domain_quota_driver
-        self.__domain_driver = importutils.import_object(domain_quota_cls)
+        if not self._d_driver_cls:
+            self._d_driver_cls = CONF.quota_driver
+        if isinstance(self._d_driver_cls, basestring):
+            self._d_driver_cls = importutils.import_object(self._d_driver_cls)
+        self.__domain_driver = self._d_driver_cls
         return self.__domain_driver
 
     def __contains__(self, resource):
@@ -2154,18 +2158,18 @@ class QuotaEngine(object):
                            common user's tenant.
         """
 
-        domain_reservations = self._driver.reserve(context, self._resources,
-                                                   deltas, expire=expire,
-                                                   project_id=project_id,
-                                                   user_id=user_id)
-        project_reservations = self._driver.reserve(context, self._resources,
-                                                    deltas, expire=expire,
-                                                    project_id=project_id,
-                                                    user_id=user_id)
+        domain_res = self._driver_domain.reserve(context, self._resources,
+                                                 deltas, expire=expire,
+                                                 project_id=project_id,
+                                                 user_id=user_id)
+        project_res = self._driver.reserve(context, self._resources,
+                                           deltas, expire=expire,
+                                           project_id=project_id,
+                                           user_id=user_id)
 
         reservations = {
-                        'domain': domain_reservations,
-                        'project': project_reservations
+                        'domain': domain_res,
+                        'project': project_res
                        }
 
         LOG.debug("Created reservations %s", reservations)
@@ -2176,7 +2180,7 @@ class QuotaEngine(object):
         """Commit reservations.
 
         :param context: The request context, for access checks.
-        :param reservations: A list of the reservation UUIDs, as
+        :param reservations: A dict of lists of the reservation UUIDs, as
                              returned by the reserve() method.
         :param project_id: Specify the project_id if current context
                            is admin and admin wants to impact on
@@ -2209,7 +2213,7 @@ class QuotaEngine(object):
         """Roll back reservations.
 
         :param context: The request context, for access checks.
-        :param reservations: A list of the reservation UUIDs, as
+        :param reservations: A dict of lists of the reservation UUIDs, as
                              returned by the reserve() method.
         :param project_id: Specify the project_id if current context
                            is admin and admin wants to impact on

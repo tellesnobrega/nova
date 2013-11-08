@@ -553,7 +553,8 @@ class QuotaEngineTestCase(test.TestCase):
         self.assertEqual(result, 42)
 
     def _make_quota_obj(self, driver):
-        quota_obj = quota.QuotaEngine(quota_driver_class=driver)
+        quota_obj = quota.QuotaEngine(quota_driver_class=driver,
+                                      domain_driver_class=driver)
         resources = [
             quota.AbsoluteResource('test_resource4'),
             quota.AbsoluteResource('test_resource3'),
@@ -703,6 +704,18 @@ class QuotaEngineTestCase(test.TestCase):
                         test_resource4=1,
                         ), None, None, None),
                 ('reserve', context, quota_obj._resources, dict(
+                        test_resource1=4,
+                        test_resource2=3,
+                        test_resource3=2,
+                        test_resource4=1,
+                        ), None, None, None),
+                ('reserve', context, quota_obj._resources, dict(
+                        test_resource1=1,
+                        test_resource2=2,
+                        test_resource3=3,
+                        test_resource4=4,
+                        ), 3600, None, None),
+                ('reserve', context, quota_obj._resources, dict(
                         test_resource1=1,
                         test_resource2=2,
                         test_resource3=3,
@@ -714,14 +727,20 @@ class QuotaEngineTestCase(test.TestCase):
                         test_resource3=3,
                         test_resource4=4,
                         ), None, 'fake_project', None),
+                ('reserve', context, quota_obj._resources, dict(
+                        test_resource1=1,
+                        test_resource2=2,
+                        test_resource3=3,
+                        test_resource4=4,
+                        ), None, 'fake_project', None),
                 ])
         self.assertEqual(result1['project'], [
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
-        self.assertEqual(result1['project'], [
+        self.assertEqual(result2['project'], [
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
-        self.assertEqual(result1['project'], [
+        self.assertEqual(result3['project'], [
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
 
@@ -730,7 +749,8 @@ class QuotaEngineTestCase(test.TestCase):
         driver = FakeDriver()
         quota_obj = self._make_quota_obj(driver)
         quota_obj.commit(context,
-                         {'project': ['resv-01', 'resv-02', 'resv-03']})
+                         {'domain': ['resv-01', 'resv-02', 'resv-03'],
+                         'project': ['resv-01', 'resv-02', 'resv-03']})
 
         self.assertEqual(driver.called, [('commit', context,
                                            ['resv-01', 'resv-02', 'resv-03'],
@@ -745,7 +765,8 @@ class QuotaEngineTestCase(test.TestCase):
         driver = FakeDriver()
         quota_obj = self._make_quota_obj(driver)
         quota_obj.rollback(context,
-                           {'project': ['resv-01', 'resv-02', 'resv-03']})
+                           {'domain': ['resv-01', 'resv-02', 'resv-03'],
+                           'project': ['resv-01', 'resv-02', 'resv-03']})
 
         self.assertEqual(driver.called, [
                 ('rollback', context, ['resv-01', 'resv-02', 'resv-03'], None,

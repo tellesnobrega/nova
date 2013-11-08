@@ -596,7 +596,7 @@ class DictOfNullableStringsField(AutoTypedField):
 
 
 class DictOfListsOfStringsField(AutoTypedField):
-    AUTO_TYPE = Dict(List(String()))
+    AUTO_TYPE = Dict(List(String()), nullable=True)
 
 
 class ListOfStringsField(AutoTypedField):

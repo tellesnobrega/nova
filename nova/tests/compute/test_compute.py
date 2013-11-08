@@ -226,8 +226,11 @@ class BaseTestCase(test.TestCase):
 
         self.user_id = 'fake'
         self.project_id = 'fake'
+        self.domain_id = 'fake'
         self.context = context.RequestContext(self.user_id,
-                                              self.project_id)
+                                              self.project_id,
+                                              self.domain_id)
+
         self.none_quotas = objects.Quotas.from_reservations(
                 self.context, None)
 

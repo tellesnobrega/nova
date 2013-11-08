@@ -137,9 +137,11 @@ class CloudpipeController(object):
         authorize(context)
         params = body.get('cloudpipe', {})
         project_id = params.get('project_id', context.project_id)
+        domain_id = 'default'
         # NOTE(vish): downgrade to project context. Note that we keep
         #             the same token so we can still talk to glance
         context.project_id = project_id
+        context.domain_id = domain_id
         context.user_id = 'project-vpn'
         context.is_admin = False
         context.roles = []

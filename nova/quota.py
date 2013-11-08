@@ -964,8 +964,7 @@ class DomainQuotaDriver(object):
         domain_quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, domain_id=domain_id)
         user_quotas = self._get_quotas(context, resources, values.keys(),
-                                       has_sync=False, project_id=project_id,
-                                       user_id=user_id)
+                                       has_sync=False, domain_id=domain_id)
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
         overs = [key for key, val in values.items()

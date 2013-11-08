@@ -1892,8 +1892,13 @@ class DomainQuotaDriver(object):
         #            session isn't available outside the DBAPI, we
         #            have to do the work there.
 
-        project_list = None
-        if hasattr(context, "service_catalog"):
+        project_list = []
+        print"<<<<<<<<<<<<<<<<<<CONTEXT>>>>>>>>>>>>>>>"
+        print vars(context)
+        print"<<<<<<<<<<<<<<<<<<CONTEXT>>>>>>>>>>>>>>>"
+        if (hasattr(context, "service_catalog")
+            and context.service_catalog != []):
+
             auth_url = None
             for service in context.service_catalog:
                 if service['name'] == 'keystone':

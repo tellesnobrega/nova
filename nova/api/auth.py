@@ -167,6 +167,7 @@ class NovaKeystoneContext(wsgi.Middleware):
 
         ctx = context.RequestContext(user_id,
                                      project_id,
+                                     domain_id,
                                      user_name=user_name,
                                      project_name=project_name,
                                      roles=roles,

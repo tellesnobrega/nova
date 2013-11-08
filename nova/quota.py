@@ -953,18 +953,27 @@ class DomainQuotaDriver(object):
             raise exception.InvalidQuotaValue(unders=sorted(unders))
 
         domain_id = context.domain_id
+        # If project_id is None, then we use the project_id in context
+        if project_id is None:
+            project_id = context.project_id
+        # If user id is None, then we use the user_id in context
+        if user_id is None:
+            user_id = context.user_id
 
         # Get the applicable quotas
         domain_quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, domain_id=domain_id)
-
+        user_quotas = self._get_quotas(context, resources, values.keys(),
+                                       has_sync=False, project_id=project_id,
+                                       user_id=user_id)
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
         overs = [key for key, val in values.items()
-                 if (domain_quotas[key] >= 0 and domain_quotas[key] < val)]
+                 if (domain_quotas[key] >= 0 and domain_quotas[key] < val)
+                 or (user_quotas[key] >= 0 and user_quotas[key] < val)]
         if overs:
             raise exception.OverQuota(overs=sorted(overs),
-                                       quotas=domain_quotas,
+                                      quotas=domain_quotas,
                                       usages={})
 
     def reserve(self, context, resources, deltas, expire=None,

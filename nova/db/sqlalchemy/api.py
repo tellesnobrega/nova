@@ -16,7 +16,6 @@
 #    under the License.
 
 """Implementation of SQLAlchemy backend."""
-
 import collections
 import copy
 import datetime
@@ -25,7 +24,6 @@ import sys
 import threading
 import time
 import uuid
-
 
 from oslo.config import cfg
 from oslo.db import exception as db_exc
@@ -65,6 +63,7 @@ from nova.i18n import _, _LI
 from nova.openstack.common import log as logging
 from nova.openstack.common import uuidutils
 from nova import quota
+
 
 db_opts = [
     cfg.StrOpt('osapi_compute_unique_server_name_scope',
@@ -3735,7 +3734,7 @@ def _domain_quota_reservations_query(session, context, reservations):
 @require_context
 @_retry_on_deadlock
 def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
-                         until_refresh, max_age, domain_id=None):
+                         until_refresh, max_age, project_list, domain_id=None):
     elevated = context.elevated()
     session = get_session()
     with session.begin():
@@ -3748,6 +3747,16 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
 
         # Handle usage refresh
         work = set(deltas.keys())
+
+        """auth_url = None
+        for service in context.service_catalog:
+            if service['name'] == 'keystone':
+                auth_url = service['endpoints'][0]['adminURL']
+
+        keystone = client.Client(token=context.auth_token,
+                                 auth_url=auth_url,
+                                 tenant_id=context.project_id)"""
+
         while work:
             resource = work.pop()
 
@@ -3773,50 +3782,38 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
                               timeutils.utcnow()).seconds >= max_age:
                 refresh = True
 
-            """
             # OK, refresh the usage
             if refresh:
                 # Grab the sync routine
                 sync = QUOTA_SYNC_FUNCTIONS[resources[resource].sync]
+                for project in project_list:
+                    project_id = project.id
+                    updates = sync(elevated, project_id, None, session)
+                    for res, in_use in updates.items():
+                        # Make sure we have a destination for the usage!
+                        if res not in domain_usages:
+                            domain_usages[res] = _domain_quota_usage_create(
+                                elevated,
+                                domain_id,
+                                res,
+                                0, 0,
+                                until_refresh or None,
+                                session=session)
 
-                updates = sync(elevated, project_id, user_id, session)
-                for res, in_use in updates.items():
-                    # Make sure we have a destination for the usage!
-                    if ((res not in PER_PROJECT_QUOTAS) and
-                            (res not in user_usages)):
-                        user_usages[res] = _quota_usage_create(elevated,
-                                                         project_id,
-                                                         user_id,
-                                                         res,
-                                                         0, 0,
-                                                         until_refresh or None,
-                                                         session=session)
-                    if ((res in PER_PROJECT_QUOTAS) and
-                            (res not in user_usages)):
-                        user_usages[res] = _quota_usage_create(elevated,
-                                                         project_id,
-                                                         None,
-                                                         res,
-                                                         0, 0,
-                                                         until_refresh or None,
-                                                         session=session)
-
-                    if user_usages[res].in_use != in_use:
+                    if domain_usages[res].in_use != in_use:
                         LOG.debug(_('quota_usages out of sync, updating. '
-                                    'project_id: %(project_id)s, '
-                                    'user_id: %(user_id)s, '
+                                    'domain_id: %(domain_id)s, '
                                     'resource: %(res)s, '
                                     'tracked usage: %(tracked_use)s, '
                                     'actual usage: %(in_use)s'),
-                            {'project_id': project_id,
-                             'user_id': user_id,
+                            {'domain_id': domain_id,
                              'res': res,
-                             'tracked_use': user_usages[res].in_use,
+                             'tracked_use': domain_usages[res].in_use,
                              'in_use': in_use})
 
                     # Update the usage
-                    user_usages[res].in_use = in_use
-                    user_usages[res].until_refresh = until_refresh or None
+                    domain_usages[res].in_use = in_use
+                    domain_usages[res].until_refresh = until_refresh or None
 
                     # Because more than one resource may be refreshed
                     # by the call to the sync routine, and we don't
@@ -3840,7 +3837,6 @@ def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
         #            If a project has gone over quota, we want them to
         #            be able to reduce their usage without any
         #            problems.
-        print domain_usages
         overs = [res for res, delta in deltas.items()
                  if domain_quotas[res] >= 0 and delta >= 0 and
                  (domain_quotas[res] < delta +

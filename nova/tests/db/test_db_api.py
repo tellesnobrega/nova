@@ -21,7 +21,6 @@
 import copy
 import datetime
 import types
-import uuid as stdlib_uuid
 
 import iso8601
 import mock
@@ -54,8 +53,22 @@ from nova import exception
 from nova.openstack.common import uuidutils
 from nova import quota
 from nova import test
+import mox
+import netaddr
+from nova import block_device, context, db, exception, quota, test, utils
+from nova.compute import vm_states
+from nova.db.sqlalchemy import api as sqlalchemy_api, models, utils as db_utils
+from nova.openstack.common import timeutils, uuidutils
+from nova.openstack.common.db import exception as db_exc
+from nova.openstack.common.db.sqlalchemy import session as db_session
 from nova.tests import matchers
-from nova import utils
+from oslo.config import cfg
+from sqlalchemy import MetaData, exc
+from sqlalchemy.dialects import sqlite
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import exc as sqlalchemy_orm_exc, query
+from sqlalchemy.sql.expression import select
+import uuid as stdlib_uuid
 
 CONF = cfg.CONF
 CONF.import_opt('reserved_host_memory_mb', 'nova.compute.resource_tracker')
@@ -118,6 +131,12 @@ def _quota_reserve(context, project_id, user_id):
                     datetime.timedelta(days=1), project_id, user_id)
 
 
+class FakeProject(object):
+    def __init__(self, id, name):
+        self.id = id
+        self.name = name
+
+
 def _domain_quota_reserve(context, domain_id):
     """Create sample Quota, QuotaUsage and Reservation objects.
 
@@ -157,7 +176,9 @@ def _domain_quota_reserve(context, domain_id):
 
     return db.domain_quota_reserve(context, resources, domain_quotas,
                     deltas, timeutils.utcnow(), CONF.until_refresh,
-                    datetime.timedelta(days=1), domain_id)
+                    datetime.timedelta(days=1),
+                    [FakeProject("fake_project", "fake_project")],
+                    domain_id)
 
 
 class DbTestCase(test.TestCase):
@@ -1218,12 +1239,31 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
         reservations = _domain_quota_reserve(self.ctxt, 'domain1')
         expected = {'domain_id': 'domain1',
                 'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 1, 'in_use': 0},
-                'fixed_ips': {'reserved': 2, 'in_use': 0}}
+                'resource1': {'reserved': 1, 'in_use': 1},
+                'fixed_ips': {'reserved': 2, 'in_use': 2}}
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))
         db.domain_reservation_get(self.ctxt, reservations[0])
         db.domain_reservation_commit(self.ctxt, reservations, 'domain1')
+        self.assertRaises(exception.ReservationNotFound,
+            db.domain_reservation_get, self.ctxt, reservations[0])
+        expected = {'domain_id': 'domain1',
+                'resource0': {'reserved': 0, 'in_use': 0},
+                'resource1': {'reserved': 0, 'in_use': 2},
+                'fixed_ips': {'reserved': 0, 'in_use': 4}}
+        self.assertEqual(expected, db.domain_quota_usage_get_all(
+                                            self.ctxt, 'domain1'))
+
+    def test_domain_reservation_rollback(self):
+        reservations = _domain_quota_reserve(self.ctxt, 'domain1')
+        expected = {'domain_id': 'domain1',
+                'resource0': {'reserved': 0, 'in_use': 0},
+                'resource1': {'reserved': 1, 'in_use': 1},
+                'fixed_ips': {'reserved': 2, 'in_use': 2}}
+        self.assertEqual(expected, db.domain_quota_usage_get_all(
+                                            self.ctxt, 'domain1'))
+        db.domain_reservation_get(self.ctxt, reservations[0])
+        db.domain_reservation_rollback(self.ctxt, reservations, 'domain1')
         self.assertRaises(exception.ReservationNotFound,
             db.domain_reservation_get, self.ctxt, reservations[0])
         expected = {'domain_id': 'domain1',
@@ -1233,33 +1273,14 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))
 
-    def test_domain_reservation_rollback(self):
-        reservations = _domain_quota_reserve(self.ctxt, 'domain1')
-        expected = {'domain_id': 'domain1',
-                'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 1, 'in_use': 0},
-                'fixed_ips': {'reserved': 2, 'in_use': 0}}
-        self.assertEqual(expected, db.domain_quota_usage_get_all(
-                                            self.ctxt, 'domain1'))
-        db.domain_reservation_get(self.ctxt, reservations[0])
-        db.domain_reservation_rollback(self.ctxt, reservations, 'domain1')
-        self.assertRaises(exception.ReservationNotFound,
-            db.domain_reservation_get, self.ctxt, reservations[0])
-        expected = {'domain_id': 'domain1',
-                'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 0, 'in_use': 0},
-                'fixed_ips': {'reserved': 0, 'in_use': 0}}
-        self.assertEqual(expected, db.domain_quota_usage_get_all(
-                                            self.ctxt, 'domain1'))
-
     def test_domain_reservation_expire(self):
         self.values['expire'] = timeutils.utcnow() + datetime.timedelta(days=1)
         _domain_quota_reserve(self.ctxt, 'domain1')
         db.domain_reservation_expire(self.ctxt)
         expected = {'domain_id': 'domain1',
                 'resource0': {'reserved': 0, 'in_use': 0},
-                'resource1': {'reserved': 0, 'in_use': 0},
-                'fixed_ips': {'reserved': 0, 'in_use': 0}}
+                'resource1': {'reserved': 0, 'in_use': 1},
+                'fixed_ips': {'reserved': 0, 'in_use': 2}}
 
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))

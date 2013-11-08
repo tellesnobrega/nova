@@ -146,20 +146,6 @@ class NovaKeystoneContext(wsgi.Middleware):
             try:
                 catalog_header = req.headers.get('X_SERVICE_CATALOG')
                 service_catalog = jsonutils.loads(catalog_header)
-                print "<<<<<<<<<<<<<<<<<<<SERVICE_CATALOG>>>>>>>>>>>>>>>>>>>"
-                print service_catalog
-                print "<<<<<<<<<<<<<<<<<<<SERVICE_CATALOG>>>>>>>>>>>>>>>>>>>"
-                print "<<<<<<<<<<<<<<<<<<<AUTH_URL>>>>>>>>>>>>>>>>>>>"
-                print auth_url
-                print "<<<<<<<<<<<<<<<<<<<AUTH_URL>>>>>>>>>>>>>>>>>>>"
-
-                keystone = client.Client(username='admin', password='admin',
-                                tenant_name='demo', auth_url=auth_url)
-
-                project_list = keystone.tenants.list()
-                print "<<<<<<<<<<<<<<<<<<PROJECT_LIST>>>>>>>>>>>>>>>>>>>"
-                print project_list
-                print "<<<<<<<<<<<<<<<<<<PROJECT_LIST>>>>>>>>>>>>>>>>>>>"
 
             except ValueError:
                 raise webob.exc.HTTPInternalServerError(

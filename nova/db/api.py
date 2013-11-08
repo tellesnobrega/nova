@@ -1211,11 +1211,12 @@ def quota_reserve(context, resources, quotas, user_quotas, deltas, expire,
 
 
 def domain_quota_reserve(context, resources, domain_quotas, deltas,
-                         expire, until_refresh, max_age, domain_id):
+                         expire, until_refresh, max_age, project_list,
+                         domain_id):
     """Check domain quotas and create appropriate reservations."""
     return IMPL.domain_quota_reserve(context, resources, domain_quotas, deltas,
                                      expire, until_refresh, max_age,
-                                     domain_id=domain_id)
+                                     project_list, domain_id=domain_id)
 
 
 def reservation_commit(context, reservations, project_id=None, user_id=None):

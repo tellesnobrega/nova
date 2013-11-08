@@ -23,6 +23,7 @@ from oslo.utils import importutils
 from oslo.utils import timeutils
 import six
 
+from keystoneclient.v3 import client
 from nova import db
 from nova import exception
 from nova.i18n import _
@@ -1062,7 +1063,7 @@ class DomainQuotaDriver(object):
         return db.domain_quota_reserve(context, resources, domain_quotas,
                                        deltas, expire,
                                        CONF.until_refresh, CONF.max_age,
-                                       domain_id=domain_id)
+                                       project_list, domain_id=domain_id)
 
     def commit(self, context, reservations, project_id=None, user_id=None):
         """Commit reservations.

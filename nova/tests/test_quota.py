@@ -930,7 +930,7 @@ class DomainQuotaDriverTestCase(test.TestCase):
     def _stub_domain_quota_reserve(self):
         def fake_domain_quota_reserve(context, resources, domain_quotas,
                                       deltas, expire, until_refresh, max_age,
-                                      domain_id=None):
+                                      project_list, domain_id=None):
             self.calls.append(('domain_quota_reserve', expire, until_refresh,
                                max_age))
             return ['dresv-1', 'dresv-2', 'dresv-3']

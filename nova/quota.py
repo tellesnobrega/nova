@@ -92,7 +92,7 @@ quota_opts = [
                default='nova.quota.DbQuotaDriver',
                help='default driver to use for project quota checks'),
     cfg.StrOpt('domain_quota_driver',
-               default='nova.quota.DomainQuotaDriver',
+               default='nova.quota.NoopQuotaDriver',
                help='default driver to use for domain quota checks'),
     ]
 
@@ -1049,7 +1049,7 @@ class DomainQuotaDriver(object):
         project_list = []
 
         if (hasattr(context, "service_catalog")
-                and context.service_catalog != []):
+            and context.service_catalog != []):
             auth_url = None
             for service in context.service_catalog:
                 if service['name'] == 'keystone':

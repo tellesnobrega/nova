@@ -285,6 +285,7 @@ class ServersControllerCreateTestV21(test.TestCase):
                 'access_ip_v6': 'fead::1234',
                 'image_ref': inst.get('image_ref', def_image_ref),
                 'user_id': 'fake',
+                'domain_id': 'fake',
                 'project_id': 'fake',
                 'availability_zone': 'nova',
                 'reservation_id': inst['reservation_id'],

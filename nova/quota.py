@@ -1893,12 +1893,8 @@ class DomainQuotaDriver(object):
         #            have to do the work there.
 
         project_list = []
-        print"<<<<<<<<<<<<<<<<<<CONTEXT>>>>>>>>>>>>>>>"
-        print vars(context)
-        print"<<<<<<<<<<<<<<<<<<CONTEXT>>>>>>>>>>>>>>>"
         if (hasattr(context, "service_catalog")
             and context.service_catalog != []):
-
             auth_url = None
             for service in context.service_catalog:
                 if service['name'] == 'keystone':

@@ -121,16 +121,14 @@ class NovaKeystoneContext(wsgi.Middleware):
 
         if 'X_DOMAIN_ID' in req.headers and req.headers['X_DOMAIN_ID'] != 'None':
             domain_id = req.headers['X_DOMAIN_ID']
-        elif 'X_PROJECT_DOMAIN_ID' in req.headers 
-        and req.headers['X_PROJECT_DOMAIN_ID'] != 'None':
+        elif 'X_PROJECT_DOMAIN_ID' in req.headers  and req.headers['X_PROJECT_DOMAIN_ID'] != 'None':
             domain_id = req.headers['X_PROJECT_DOMAIN_ID']
-        elif 'X_USER_DOMAIN_ID' in req.headers 
-        and req.headers['X_USER_DOMAIN_ID'] != 'None':
+        elif 'X_USER_DOMAIN_ID' in req.headers and req.headers['X_USER_DOMAIN_ID'] != 'None':
             domain_id = req.headers['X_USER_DOMAIN_ID']
         else:
             domain_id = 'default'
 
-        print "\n=================\n", req.headers, "\n================\n"
+        print "\n=================\n", req , "\n================\n"
         print ">>>>>>>>>>>>>>>", domain_id
 
         user_name = req.headers.get('X_USER_NAME')

@@ -119,9 +119,7 @@ class NovaKeystoneContext(wsgi.Middleware):
 
         project_name = req.headers.get('X_TENANT_NAME')
 
-        if 'X_DOMAIN_ID' in req.headers and req.headers['X_DOMAIN_ID'] != 'None':
-            domain_id = req.headers['X_DOMAIN_ID']
-        elif 'X_PROJECT_DOMAIN_ID' in req.headers  and req.headers['X_PROJECT_DOMAIN_ID'] != 'None':
+        if 'X_PROJECT_DOMAIN_ID' in req.headers  and req.headers['X_PROJECT_DOMAIN_ID'] != 'None':
             domain_id = req.headers['X_PROJECT_DOMAIN_ID']
         elif 'X_USER_DOMAIN_ID' in req.headers and req.headers['X_USER_DOMAIN_ID'] != 'None':
             domain_id = req.headers['X_USER_DOMAIN_ID']

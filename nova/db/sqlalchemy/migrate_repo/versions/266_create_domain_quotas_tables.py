@@ -93,6 +93,7 @@ def upgrade(migrate_engine):
                Index('domain_reservations_uuid_idx', 'uuid'),
                ]
 
+
     # Common indexes
     # for index in indexes:
     #    print "<<<<<<<<<<<<<<<INDEXES>>>>>>>>>>>>>>>>>>>"

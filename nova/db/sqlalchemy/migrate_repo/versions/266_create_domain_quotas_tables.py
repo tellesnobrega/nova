@@ -98,6 +98,9 @@ def upgrade(migrate_engine):
     #    print "<<<<<<<<<<<<<<<INDEXES>>>>>>>>>>>>>>>>>>>"
     #    print index
     #    index.create(migrate_engine)
+    if migrate_engine.name == 'mysql' or migrate_engine.name == 'postgresql':
+        for index in indexes:
+            index.create(migrate_engine)
 
     fkeys = [
              [[domain_reservation.c.usage_id],

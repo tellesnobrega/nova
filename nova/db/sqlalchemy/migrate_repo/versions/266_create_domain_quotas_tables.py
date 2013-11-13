@@ -95,6 +95,8 @@ def upgrade(migrate_engine):
     # Common indexes
     if migrate_engine.name == 'mysql' or migrate_engine.name == 'postgresql':
         for index in indexes:
+            print "<<<<<<<<<<<<<<<INDEXES>>>>>>>>>>>>>>>>>>>"
+            print index
             index.create(migrate_engine)
 
     fkeys = [

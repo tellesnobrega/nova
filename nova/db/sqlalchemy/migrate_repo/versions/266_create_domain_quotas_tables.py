@@ -93,10 +93,10 @@ def upgrade(migrate_engine):
                ]
 
     # Common indexes
-    for index in indexes:
-        print "<<<<<<<<<<<<<<<INDEXES>>>>>>>>>>>>>>>>>>>"
-        print index
-        index.create(migrate_engine)
+    # for index in indexes:
+    #    print "<<<<<<<<<<<<<<<INDEXES>>>>>>>>>>>>>>>>>>>"
+    #    print index
+    #    index.create(migrate_engine)
 
     fkeys = [
              [[domain_reservation.c.usage_id],

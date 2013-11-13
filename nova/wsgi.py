@@ -38,6 +38,9 @@ from nova import exception
 from nova.i18n import _
 from nova.openstack.common import log as logging
 
+# Raise the default from 8192 to accommodate large tokens
+eventlet.wsgi.MAX_HEADER_LINE = 163840
+
 wsgi_opts = [
     cfg.StrOpt('api_paste_config',
                default="api-paste.ini",

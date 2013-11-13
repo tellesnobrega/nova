@@ -94,9 +94,6 @@ quota_opts = [
     cfg.StrOpt('domain_quota_driver',
                default='nova.quota.NoopQuotaDriver',
                help='default driver to use for quota checks'),
-    cfg.StrOpt('domain_quota_driver',
-               default='nova.quota.DomainQuotaDriver',
-               help='default driver to use for domain quota checks'),
     ]
 
 CONF = cfg.CONF

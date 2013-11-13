@@ -92,7 +92,7 @@ quota_opts = [
                default='nova.quota.DbQuotaDriver',
                help='default driver to use for project quota checks'),
     cfg.StrOpt('domain_quota_driver',
-               default='nova.quota.NoopQuotaDriver',
+               default='nova.quota.DomainQuotaDriver',
                help='default driver to use for domain quota checks'),
     ]
 

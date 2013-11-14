@@ -81,8 +81,8 @@ quota_opts = [
                default=10,
                help='Number of servers per server group'),
     cfg.IntOpt('reservation_expire',
-               default=20,
-               help='Number of seconds until a reservation expires'),
+               default=86400,
+               help='number of seconds until a reservation expires'),
     cfg.IntOpt('until_refresh',
                default=0,
                help='Count of reservations until usage is refreshed'),
@@ -1081,7 +1081,6 @@ class DomainQuotaDriver(object):
                         common user.
         """
         domain_id = context.domain_id
-        time.sleep(60)
         db.domain_reservation_commit(context, reservations,
                                      domain_id=domain_id)
 

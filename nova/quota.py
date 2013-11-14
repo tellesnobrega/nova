@@ -434,6 +434,10 @@ class DbQuotaDriver(object):
         """
         _valid_method_call_check_resources(values, 'check')
 
+
+        print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+        print resources
+        print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
         # Ensure no value is less than zero
         unders = [key for key, val in values.items() if val < 0]
         if unders:
@@ -950,7 +954,7 @@ class DomainQuotaDriver(object):
                         is admin and admin wants to impact on
                         common user.
         """
-    
+
         print "<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>"
         print resources
         print "<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>"

@@ -3418,6 +3418,9 @@ def _domain_reservation_create(context, uuid, usage, domain_id, resource,
     reservation_ref.delta = delta
     reservation_ref.expire = expire
     reservation_ref.save(session=session)
+    reservation_ref.updated_at = timeutils.utcnow()
+    reservation_ref.cretead_at = timeutils.utcnow()
+
     return reservation_ref
 
 

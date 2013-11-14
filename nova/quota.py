@@ -81,7 +81,7 @@ quota_opts = [
                default=10,
                help='Number of servers per server group'),
     cfg.IntOpt('reservation_expire',
-               default=60,
+               default=20,
                help='number of seconds until a reservation expires'),
     cfg.IntOpt('until_refresh',
                default=0,

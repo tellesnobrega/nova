@@ -17,6 +17,7 @@
 """Quotas for instances, and floating ips."""
 
 import datetime
+import time
 
 from oslo.config import cfg
 from oslo.utils import importutils
@@ -1080,7 +1081,7 @@ class DomainQuotaDriver(object):
                         common user.
         """
         domain_id = context.domain_id
-
+        time.sleep(60)
         db.domain_reservation_commit(context, reservations,
                                      domain_id=domain_id)
 

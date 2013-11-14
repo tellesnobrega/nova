@@ -948,7 +948,7 @@ class DomainQuotaDriver(object):
                         is admin and admin wants to impact on
                         common user.
         """
-    
+
         print "<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>"
         print resources
         print "<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>"

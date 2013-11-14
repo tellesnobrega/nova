@@ -3273,7 +3273,7 @@ def _domain_quota_usage_create(context, domain_id, resource, in_use,
     quota_usage_ref.until_refresh = until_refresh
     # updated_at is needed for judgement of max_age
     quota_usage_ref.updated_at = timeutils.utcnow()
-    quota_usage_ref.cretead_at = timeutils.utcnow()
+    quota_usage_ref.created_at = timeutils.utcnow()
 
     quota_usage_ref.save(session=session)
 
@@ -3419,7 +3419,7 @@ def _domain_reservation_create(context, uuid, usage, domain_id, resource,
     reservation_ref.expire = expire
     reservation_ref.save(session=session)
     reservation_ref.updated_at = timeutils.utcnow()
-    reservation_ref.cretead_at = timeutils.utcnow()
+    reservation_ref.created_at = timeutils.utcnow()
 
     return reservation_ref
 

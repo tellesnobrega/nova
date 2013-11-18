@@ -434,9 +434,6 @@ class DbQuotaDriver(object):
         """
         _valid_method_call_check_resources(values, 'check')
 
-        print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<RESOURCES_DB>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
-        print resources
-        print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<RESOURCES_DB>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
         # Ensure no value is less than zero
         unders = [key for key, val in values.items() if val < 0]
         if unders:
@@ -909,9 +906,6 @@ class DomainQuotaDriver(object):
                             quota.hard_limit
 
 
-        print "<<<<<<<<<<<<<<<<<<<<<MODIFIED_QUOTAS>>>>>>>>>>>>>>>>>>>>>"
-        print modified_quotas
-        print "<<<<<<<<<<<<<<<<<<<<<MODIFIED_QUOTAS>>>>>>>>>>>>>>>>>>>>>"
         return modified_quotas
 
     def get_settable_quotas(self, context, resources, project_id,
@@ -958,12 +952,6 @@ class DomainQuotaDriver(object):
                         common user.
         """
 
-        print "<<<<<<<<<<<<<<<<<<<<RESOURCES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
-        print resources
-        print "<<<<<<<<<<<<<<<<<<<<RESOURCES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
-        print "<<<<<<<<<<<<<<<<<<<<VALUES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
-        print values
-        print "<<<<<<<<<<<<<<<<<<<<VALUES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
         # Ensure no value is less than zero
         unders = [key for key, val in values.items() if val < 0]
         if unders:
@@ -981,9 +969,6 @@ class DomainQuotaDriver(object):
         domain_quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, domain_id=domain_id)
 
-        print "<<<<<<<<<<<<<<<<<<<<DOMAIN_QUOTAS>>>>>>>>>>>>>>>>>>>>>>>>>"
-        print domain_quotas
-        print "<<<<<<<<<<<<<<<<<<<<DOMAIN_QUOTAS>>>>>>>>>>>>>>>>>>>>>>>>>"
 
         #user_quotas = self._get_quotas(context, resources, values.keys(),
         #                               has_sync=False, domain_id=domain_id)
@@ -1355,46 +1340,8 @@ class NoopQuotaDriver(object):
                         is admin and admin wants to impact on
                         common user.
         """
-        _valid_method_call_check_resources(values, 'check')
-
-        # Ensure no value is less than zero
-        unders = [key for key, val in values.items() if val < 0]
-        if unders:
-            raise exception.InvalidQuotaValue(unders=sorted(unders))
-
-        # If project_id is None, then we use the project_id in context
-        if project_id is None:
-            project_id = context.project_id
-        # If user id is None, then we use the user_id in context
-        if user_id is None:
-            user_id = context.user_id
-
-        # Get the applicable quotas
-        project_quotas = db.quota_get_all_by_project(context, project_id)
-        quotas = self._get_quotas(context, resources, values.keys(),
-                                  has_sync=False, project_id=project_id,
-                                  project_quotas=project_quotas)
-        user_quotas = self._get_quotas(context, resources, values.keys(),
-                                       has_sync=False, project_id=project_id,
-                                       user_id=user_id,
-                                       project_quotas=project_quotas)
-
-        # Check the quotas and construct a list of the resources that
-        # would be put over limit by the desired values
-        overs = [key for key, val in values.items()
-                 if quotas[key] >= 0 and quotas[key] < val or
-                 (user_quotas[key] >= 0 and user_quotas[key] < val)]
-                                  has_sync=False, project_id=project_id)
-
-        if overs:
-            headroom = {}
-            for key in overs:
-                headroom[key] = min(
-                    val for val in (quotas.get(key), project_quotas.get(key))
-                    if val is not None
-                )
-            raise exception.OverQuota(overs=sorted(overs), quotas=quotas,
-                                      usages={}, headroom=headroom)
+        pass
+        return True
 
     def reserve(self, context, resources, deltas, expire=None,
                 project_id=None, user_id=None):
@@ -3077,27 +3024,14 @@ class QuotaEngine(object):
         if not reservations:
             return
 
-        print "<<<<<<<<<<<<<<<<<<<RESERVATION>>>>>>>>>>>>>>>>>"
-        print reservations
-        print "<<<<<<<<<<<<<<<<<<<RESERVATION>>>>>>>>>>>>>>>>>"
         domain_reservations = reservations.get('domain')
         project_reservations = reservations.get('project')
 
-        print "<<<<<<<<<<<<<<<<<<<<<DOMAIN_RESERVATION>>>>>>>>>>>>>>>>>>>"
-        print domain_reservations
-        print "<<<<<<<<<<<<<<<<<<<<<DOMAIN_RESERVATION>>>>>>>>>>>>>>>>>>>"
-        print "<<<<<<<<<<<<<<<<<<<<<PROJECT_RESERVATION>>>>>>>>>>>>>>>>>>>"
-        print project_reservations
-        print "<<<<<<<<<<<<<<<<<<<<<PROJECT_RESERVATION>>>>>>>>>>>>>>>>>>>"
-
         try:
-            self._driver_domain.rollback(context, domain_reservations,
-                                         project_id=project_id,
-                                         user_id=user_id)
             self._driver.rollback(context, project_reservations,
                                   project_id=project_id,
                                   user_id=user_id)
-            self._driver_domain.rollback(context, reservations,
+            self._driver_domain.rollback(context, domain_reservations,
                                          project_id=project_id,
                                          user_id=user_id)
             self._driver.rollback(context, project_reservations,

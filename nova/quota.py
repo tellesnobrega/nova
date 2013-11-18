@@ -671,6 +671,7 @@ class DomainQuotaDriver(object):
     def get_by_project_and_user(self, context, project_id, user_id, resource):
         """Get a specific quota by domain."""
         domain_id = context.domain_id
+
         return db.domain_quota_get(context, domain_id, resource)
 
     def get_by_project(self, context, project_id, resource):

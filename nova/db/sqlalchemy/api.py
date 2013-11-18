@@ -229,10 +229,6 @@ def model_query(context, model, *args, **kwargs):
 
     default_deleted_value = base_model.__mapper__.c.deleted.default.arg
 
-    print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<DELETED>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
-    print default_deleted_value
-    print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<DELETED>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
-
     if read_deleted == 'no':
         query = query.filter(base_model.deleted == default_deleted_value)
     elif read_deleted == 'yes':
@@ -2959,23 +2955,12 @@ def quota_get_all_by_domain(context, domain_id):
     nova.context.authorize_domain_context(context, domain_id)
 
     query = model_query(context, models.DomainQuota, read_deleted="no")
-    print "<<<<<<<<<<<<<<<<<<<<<<<QUERY>>>>>>>>>>>>>>>>>>>>>"
-    print query
-    print "<<<<<<<<<<<<<<<<<<<<<<<QUERY>>>>>>>>>>>>>>>>>>>>>"
-
     rows = query.filter_by(domain_id=domain_id).all()
-    print "<<<<<<<<<<<<<<<<<<<<<<<<ROWS>>>>>>>>>>>>>>>>>>>>>"
-    print rows
-    print "<<<<<<<<<<<<<<<<<<<<<<<<ROWS>>>>>>>>>>>>>>>>>>>>>"
-
 
     result = {'domain_id': domain_id}
     for row in rows:
         result[row.resource] = row.hard_limit
 
-    print "<<<<<<<<<<<<<<<<DOMAIN_QUOTAS_FROM_DB>>>>>>>>>>>>>>>>>>>>>>>>>>"
-    print result
-    print "<<<<<<<<<<<<<<<<DOMAIN_QUOTAS_FROM_DB>>>>>>>>>>>>>>>>>>>>>>>>>>"
     return result
 
 

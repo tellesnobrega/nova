@@ -904,10 +904,6 @@ class DomainQuotaDriver(object):
                     modified_quotas[quota.resource]['remains'] -= \
                             quota.hard_limit
 
-
-        print "<<<<<<<<<<<<<<<<<<<<<MODIFIED_QUOTAS>>>>>>>>>>>>>>>>>>>>>"
-        print modified_quotas
-        print "<<<<<<<<<<<<<<<<<<<<<MODIFIED_QUOTAS>>>>>>>>>>>>>>>>>>>>>"
         return modified_quotas
 
     def get_settable_quotas(self, context, resources, project_id,
@@ -954,12 +950,6 @@ class DomainQuotaDriver(object):
                         common user.
         """
 
-        print "<<<<<<<<<<<<<<<<<<<<RESOURCES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
-        print resources
-        print "<<<<<<<<<<<<<<<<<<<<RESOURCES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
-        print "<<<<<<<<<<<<<<<<<<<<VALUES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
-        print values
-        print "<<<<<<<<<<<<<<<<<<<<VALUES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
         # Ensure no value is less than zero
         unders = [key for key, val in values.items() if val < 0]
         if unders:
@@ -977,10 +967,6 @@ class DomainQuotaDriver(object):
         domain_quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, domain_id=domain_id)
 
-        print "<<<<<<<<<<<<<<<<<<<<DOMAIN_QUOTAS>>>>>>>>>>>>>>>>>>>>>>>>>"
-        print domain_quotas
-        print "<<<<<<<<<<<<<<<<<<<<DOMAIN_QUOTAS>>>>>>>>>>>>>>>>>>>>>>>>>"
-        
         #user_quotas = self._get_quotas(context, resources, values.keys(),
         #                               has_sync=False, domain_id=domain_id)
         # Check the quotas and construct a list of the resources that

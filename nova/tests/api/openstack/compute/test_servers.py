@@ -1262,8 +1262,6 @@ class ServersControllerUpdateTest(ControllerTest):
             self.stubs.Set(db, 'instance_get',
                            fakes.fake_instance_get(**options))
         req = fakes.HTTPRequest.blank('/fake/servers/%s' % FAKE_UUID)
-        print '>>>>>>>>>>>>>>> req <<<<<<<<<<<<<<<<<<<<<'
-        print req
         req.method = 'PUT'
         req.content_type = 'application/%s' % content_type
         req.body = jsonutils.dumps(body)

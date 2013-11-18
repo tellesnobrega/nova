@@ -904,6 +904,10 @@ class DomainQuotaDriver(object):
                     modified_quotas[quota.resource]['remains'] -= \
                             quota.hard_limit
 
+
+        print "<<<<<<<<<<<<<<<<<<<<<MODIFIED_QUOTAS>>>>>>>>>>>>>>>>>>>>>"
+        print modified_quotas
+        print "<<<<<<<<<<<<<<<<<<<<<MODIFIED_QUOTAS>>>>>>>>>>>>>>>>>>>>>"
         return modified_quotas
 
     def get_settable_quotas(self, context, resources, project_id,

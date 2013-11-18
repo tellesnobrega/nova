@@ -950,9 +950,9 @@ class DomainQuotaDriver(object):
                         common user.
         """
 
-        print "<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>"
+        print "<<<<<<<<<<<<<<<<<<<<RESOURCES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
         print resources
-        print "<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>"
+        print "<<<<<<<<<<<<<<<<<<<<RESOURCES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
         # Ensure no value is less than zero
         unders = [key for key, val in values.items() if val < 0]
         if unders:
@@ -969,13 +969,13 @@ class DomainQuotaDriver(object):
         # Get the applicable quotas
         domain_quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, domain_id=domain_id)
-        user_quotas = self._get_quotas(context, resources, values.keys(),
-                                       has_sync=False, domain_id=domain_id)
+        #user_quotas = self._get_quotas(context, resources, values.keys(),
+        #                               has_sync=False, domain_id=domain_id)
         # Check the quotas and construct a list of the resources that
         # would be put over limit by the desired values
         overs = [key for key, val in values.items()
-                 if (domain_quotas[key] >= 0 and domain_quotas[key] < val)
-                 or (user_quotas[key] >= 0 and user_quotas[key] < val)]
+                 if (domain_quotas[key] >= 0 and domain_quotas[key] < val)]
+        #         or (user_quotas[key] >= 0 and user_quotas[key] < val)]
         if overs:
             raise exception.OverQuota(overs=sorted(overs),
                                       quotas=domain_quotas,

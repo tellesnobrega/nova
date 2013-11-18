@@ -126,9 +126,6 @@ class NovaKeystoneContext(wsgi.Middleware):
         else:
             domain_id = 'default'
 
-        print "\n=================\n", req , "\n================\n"
-        print ">>>>>>>>>>>>>>>", domain_id
-
         user_name = req.headers.get('X_USER_NAME')
 
         req_id = req.environ.get(request_id.ENV_REQUEST_ID)

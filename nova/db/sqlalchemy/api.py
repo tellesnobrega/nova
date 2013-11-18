@@ -2958,6 +2958,9 @@ def quota_get_all_by_domain(context, domain_id):
     for row in rows:
         result[row.resource] = row.hard_limit
 
+    print "<<<<<<<<<<<<<<<<DOMAIN_QUOTAS_FROM_DB>>>>>>>>>>>>>>>>>>>>>>>>>>"
+    print result
+    print "<<<<<<<<<<<<<<<<DOMAIN_QUOTAS_FROM_DB>>>>>>>>>>>>>>>>>>>>>>>>>>"
     return result
 
 

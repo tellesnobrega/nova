@@ -227,10 +227,6 @@ def model_query(context, model, *args, **kwargs):
 
     query = session.query(model, *args)
 
-    print "<<<<<<<<<<<<<<<<<<<<1.QUERY>>>>>>>>>>>>>>>>>>>"
-    print query
-    print "<<<<<<<<<<<<<<<<<<<<1.QUERY>>>>>>>>>>>>>>>>>>>"
-
     default_deleted_value = base_model.__mapper__.c.deleted.default.arg
 
     if read_deleted == 'no':
@@ -242,10 +238,6 @@ def model_query(context, model, *args, **kwargs):
     else:
         raise Exception(_("Unrecognized read_deleted value '%s'")
                             % read_deleted)
-
-    print "<<<<<<<<<<<<<<<<<<<<2.QUERY>>>>>>>>>>>>>>>>>>>"
-    print query
-    print "<<<<<<<<<<<<<<<<<<<<2.QUERY>>>>>>>>>>>>>>>>>>>"
 
     if nova.context.is_user_context(context) and project_only:
         if project_only == 'allow_none':
@@ -2964,14 +2956,8 @@ def quota_get_all_by_domain(context, domain_id):
 
     result = {'domain_id': domain_id}
     for row in rows:
-        print "<<<<<<<<<<<<<<<<<<<<<ROW>>>>>>>>>>>>>>>>>>"
-        print row
-        print "<<<<<<<<<<<<<<<<<<<<<ROW>>>>>>>>>>>>>>>>>>"
         result[row.resource] = row.hard_limit
 
-    print "<<<<<<<<<<<<<<<<DOMAIN_QUOTAS_FROM_DB>>>>>>>>>>>>>>>>>>>>>>>>>>"
-    print result
-    print "<<<<<<<<<<<<<<<<DOMAIN_QUOTAS_FROM_DB>>>>>>>>>>>>>>>>>>>>>>>>>>"
     return result
 
 

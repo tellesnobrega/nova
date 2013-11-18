@@ -229,6 +229,10 @@ def model_query(context, model, *args, **kwargs):
 
     default_deleted_value = base_model.__mapper__.c.deleted.default.arg
 
+    print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<DELETED>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+    print default_deleted_value
+    print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<DELETED>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+
     if read_deleted == 'no':
         query = query.filter(base_model.deleted == default_deleted_value)
     elif read_deleted == 'yes':

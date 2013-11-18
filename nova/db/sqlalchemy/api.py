@@ -3744,6 +3744,9 @@ def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
 def _quota_reservations_query(session, context, reservations):
     """Return the relevant reservations."""
 
+    print "<<<<<<<<<<<<<<<<<<<_QUOTA_RESERVATION_QUERY>>>>>>>>>>>>>>>>>>>>>>>"
+    print reservations
+    print "<<<<<<<<<<<<<<<<<<<_QUOTA_RESERVATION_QUERY>>>>>>>>>>>>>>>>>>>>>>>"
     # Get the listed reservations
     return model_query(context, models.Reservation,
                        read_deleted="no",
@@ -3755,6 +3758,9 @@ def _quota_reservations_query(session, context, reservations):
 def _domain_quota_reservations_query(session, context, reservations):
     """Return the relevant domain reservations."""
 
+    print "<<<<<<<<<<<<<<<<<<<_DOMAIN_QUOTA_RESERVATION_QUERY>>>>>>>>>>>>>>>>>>>>>>>"
+    print reservations
+    print "<<<<<<<<<<<<<<<<<<<_DOMAIN_QUOTA_RESERVATION_QUERY>>>>>>>>>>>>>>>>>>>>>>>"
     # Get the listed reservations
     return model_query(context, models.DomainReservation,
                        read_deleted="no",
@@ -3959,6 +3965,7 @@ def domain_reservation_commit(context, reservations, domain_id):
 
 @require_context
 def reservation_rollback(context, reservations, project_id=None, user_id=None):
+    print "<<<<<<<<<<<<<<<RESERVATION_ROLLBACK>>>>>>>>>>>>>>>>>>>>>"
     session = get_session()
     with session.begin():
         _project_usages, user_usages = _get_project_user_quota_usages(
@@ -3974,6 +3981,8 @@ def reservation_rollback(context, reservations, project_id=None, user_id=None):
 
 @require_context
 def domain_reservation_rollback(context, reservations, domain_id):
+
+    print "<<<<<<<<<<<<<<<DOMAIN_RESERVATION_ROLLBACK>>>>>>>>>>>>>>>>>>>>>"
     session = get_session()
     with session.begin():
         usages = _get_domain_quota_usages(context, session, domain_id)

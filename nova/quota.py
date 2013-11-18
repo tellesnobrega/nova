@@ -574,6 +574,8 @@ class DbQuotaDriver(object):
         if user_id is None:
             user_id = context.user_id
 
+        print "<<<<<<<<<<<<<<<<<<<COMMIT>>>>>>>>>>>>>>>>>>>>>>>"
+
         db.reservation_commit(context, reservations, project_id=project_id,
                               user_id=user_id)
 
@@ -2228,12 +2230,12 @@ class QuotaEngine(object):
         print "<<<<<<<<<<<<<<<<<<<<<PROJECT_RESERVATION>>>>>>>>>>>>>>>>>>>"
 
         try:
-            self._driver_domain.rollback(context, domain_reservations,
-                                         project_id=project_id,
-                                         user_id=user_id)
             self._driver.rollback(context, project_reservations,
                                   project_id=project_id,
                                   user_id=user_id)
+            self._driver_domain.rollback(context, domain_reservations,
+                                         project_id=project_id,
+                                         user_id=user_id)
         except Exception:
             # NOTE(Vek): Ignoring exceptions here is safe, because the
             # usage resynchronization and the reservation expiration

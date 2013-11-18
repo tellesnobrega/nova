@@ -434,6 +434,9 @@ class DbQuotaDriver(object):
         """
         _valid_method_call_check_resources(values, 'check')
 
+        print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<RESOURCES_DB>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+        print resources
+        print "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<RESOURCES_DB>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
         # Ensure no value is less than zero
         unders = [key for key, val in values.items() if val < 0]
         if unders:
@@ -951,9 +954,9 @@ class DomainQuotaDriver(object):
                         common user.
         """
 
-        print "<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>"
+        print "<<<<<<<<<<<<<<<<<<<<RESOURCES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
         print resources
-        print "<<<<<<<<<<<<<<<<<<<<RESOURCES>>>>>>>>>>>>>>>>>>>>>>>>>"
+        print "<<<<<<<<<<<<<<<<<<<<RESOURCES_DOMAIN>>>>>>>>>>>>>>>>>>>>>>>>>"
         # Ensure no value is less than zero
         unders = [key for key, val in values.items() if val < 0]
         if unders:
@@ -970,7 +973,10 @@ class DomainQuotaDriver(object):
         # Get the applicable quotas
         domain_quotas = self._get_quotas(context, resources, values.keys(),
                                   has_sync=False, domain_id=domain_id)
+<<<<<<< HEAD
 
+=======
+>>>>>>> Update quota.py
         #user_quotas = self._get_quotas(context, resources, values.keys(),
         #                               has_sync=False, domain_id=domain_id)
         # Check the quotas and construct a list of the resources that

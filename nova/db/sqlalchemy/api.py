@@ -3744,9 +3744,6 @@ def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
 def _quota_reservations_query(session, context, reservations):
     """Return the relevant reservations."""
 
-    print "<<<<<<<<<<<<<<<<<<<_QUOTA_RESERVATION_QUERY>>>>>>>>>>>>>>>>>>>>>>>"
-    print reservations
-    print "<<<<<<<<<<<<<<<<<<<_QUOTA_RESERVATION_QUERY>>>>>>>>>>>>>>>>>>>>>>>"
     # Get the listed reservations
     return model_query(context, models.Reservation,
                        read_deleted="no",
@@ -3758,9 +3755,6 @@ def _quota_reservations_query(session, context, reservations):
 def _domain_quota_reservations_query(session, context, reservations):
     """Return the relevant domain reservations."""
 
-    print "<<<<<<<<<<<<<<<<<<<_DOMAIN_QUOTA_RESERVATION_QUERY>>>>>>>>>>>>>>>>>>>>>>>"
-    print reservations
-    print "<<<<<<<<<<<<<<<<<<<_DOMAIN_QUOTA_RESERVATION_QUERY>>>>>>>>>>>>>>>>>>>>>>>"
     # Get the listed reservations
     return model_query(context, models.DomainReservation,
                        read_deleted="no",

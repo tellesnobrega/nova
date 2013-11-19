@@ -3965,7 +3965,6 @@ def domain_reservation_commit(context, reservations, domain_id):
 
 @require_context
 def reservation_rollback(context, reservations, project_id=None, user_id=None):
-    print "<<<<<<<<<<<<<<<RESERVATION_ROLLBACK>>>>>>>>>>>>>>>>>>>>>"
     session = get_session()
     with session.begin():
         _project_usages, user_usages = _get_project_user_quota_usages(
@@ -3981,8 +3980,6 @@ def reservation_rollback(context, reservations, project_id=None, user_id=None):
 
 @require_context
 def domain_reservation_rollback(context, reservations, domain_id):
-
-    print "<<<<<<<<<<<<<<<DOMAIN_RESERVATION_ROLLBACK>>>>>>>>>>>>>>>>>>>>>"
     session = get_session()
     with session.begin():
         usages = _get_domain_quota_usages(context, session, domain_id)

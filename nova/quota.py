@@ -2987,15 +2987,8 @@ class QuotaEngine(object):
 
         domain_reservations = reservations.get('domain')
         project_reservations = reservations.get('project')
-
         try:
             self._driver_domain.commit(context, domain_reservations,
-                                       project_id=project_id,
-                                       user_id=user_id)
-            self._driver.commit(context, project_reservations,
-                                project_id=project_id,
-                                user_id=user_id)
-            self._driver_domain.commit(context, reservations,
                                        project_id=project_id,
                                        user_id=user_id)
             self._driver.commit(context, project_reservations,
@@ -3028,9 +3021,6 @@ class QuotaEngine(object):
         project_reservations = reservations.get('project')
 
         try:
-            self._driver.rollback(context, project_reservations,
-                                  project_id=project_id,
-                                  user_id=user_id)
             self._driver_domain.rollback(context, domain_reservations,
                                          project_id=project_id,
                                          user_id=user_id)

@@ -3779,30 +3779,23 @@ class SecurityGroupAPI(base.Base, security_group_base.SecurityGroupBase):
             msg = _("Quota exceeded, too many security groups.")
             self.raise_over_quota(msg)
         
-        print "<<<<<<<<<<<<<<<<<<< 1 >>>>>>>>>>>>>>"  
         LOG.audit(_("Create Security Group %s"), name, context=context)
 
         try:
             self.ensure_default(context)
-            print "<<<<<<<<<<<<<<<<<<< 2 >>>>>>>>>>>>>>"
             group = {'user_id': context.user_id,
                      'project_id': context.project_id,
                      'name': name,
                      'description': description}
             try:
-                print "<<<<<<<<<<<<<<<<<<< 3 >>>>>>>>>>>>>>"
                 group_ref = self.db.security_group_create(context, group)
             except exception.SecurityGroupExists:
-                print "<<<<<<<<<<<<<<<<<<< 4 >>>>>>>>>>>>>>"
                 msg = _('Security group %s already exists') % name
                 self.raise_group_already_exists(msg)
             # Commit the reservation
-            print "<<<<<<<<<<<<<<<<<<< 5 >>>>>>>>>>>>>>"
             QUOTAS.commit(context, reservations)
         except Exception:
-            print "<<<<<<<<<<<<<<<<<<< 6 >>>>>>>>>>>>>>"
             with excutils.save_and_reraise_exception():
-                print "<<<<<<<<<<<<<<<<<<< 7 >>>>>>>>>>>>>>"
                 QUOTAS.rollback(context, reservations)
 
         return group_ref

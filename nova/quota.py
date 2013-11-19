@@ -2180,18 +2180,9 @@ class QuotaEngine(object):
 
         if not reservations:
             return
-        print "<<<<<<<<<<<<<<<<<<<RESERVATION>>>>>>>>>>>>>>>>>"
-        print reservations
-        print "<<<<<<<<<<<<<<<<<<<RESERVATION>>>>>>>>>>>>>>>>>"
 
         domain_reservations = reservations.get('domain')
         project_reservations = reservations.get('project')
-        print "<<<<<<<<<<<<<<DOMAIN_RESERVATION>>>>>>>>>>>>>>>>>>"
-        print domain_reservations
-        print "<<<<<<<<<<<<<<DOMAIN_RESERVATION>>>>>>>>>>>>>>>>>>"
-        print "<<<<<<<<<<<<<<PROJECT_RESERVATION>>>>>>>>>>>>>>>>>"
-        print project_reservations
-        print "<<<<<<<<<<<<<<PROJECT_RESERVATION>>>>>>>>>>>>>>>>>"
 
         try:
             self._driver_domain.commit(context, domain_reservations,

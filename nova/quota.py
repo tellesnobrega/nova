@@ -574,8 +574,6 @@ class DbQuotaDriver(object):
         if user_id is None:
             user_id = context.user_id
 
-        print "<<<<<<<<<<<<<<<<<<<COMMIT>>>>>>>>>>>>>>>>>>>>>>>"
-
         db.reservation_commit(context, reservations, project_id=project_id,
                               user_id=user_id)
 
@@ -2182,9 +2180,18 @@ class QuotaEngine(object):
 
         if not reservations:
             return
+        print "<<<<<<<<<<<<<<<<<<<RESERVATION>>>>>>>>>>>>>>>>>"
+        print reservations
+        print "<<<<<<<<<<<<<<<<<<<RESERVATION>>>>>>>>>>>>>>>>>"
 
         domain_reservations = reservations.get('domain')
         project_reservations = reservations.get('project')
+        print "<<<<<<<<<<<<<<DOMAIN_RESERVATION>>>>>>>>>>>>>>>>>>"
+        print domain_reservations
+        print "<<<<<<<<<<<<<<DOMAIN_RESERVATION>>>>>>>>>>>>>>>>>>"
+        print "<<<<<<<<<<<<<<PROJECT_RESERVATION>>>>>>>>>>>>>>>>>"
+        print project_reservations
+        print "<<<<<<<<<<<<<<PROJECT_RESERVATION>>>>>>>>>>>>>>>>>"
 
         try:
             self._driver_domain.commit(context, domain_reservations,
@@ -2216,26 +2223,16 @@ class QuotaEngine(object):
         if not reservations:
             return
 
-        print "<<<<<<<<<<<<<<<<<<<RESERVATION>>>>>>>>>>>>>>>>>"
-        print reservations
-        print "<<<<<<<<<<<<<<<<<<<RESERVATION>>>>>>>>>>>>>>>>>"
         domain_reservations = reservations.get('domain')
         project_reservations = reservations.get('project')
 
-        print "<<<<<<<<<<<<<<<<<<<<<DOMAIN_RESERVATION>>>>>>>>>>>>>>>>>>>"
-        print domain_reservations
-        print "<<<<<<<<<<<<<<<<<<<<<DOMAIN_RESERVATION>>>>>>>>>>>>>>>>>>>"
-        print "<<<<<<<<<<<<<<<<<<<<<PROJECT_RESERVATION>>>>>>>>>>>>>>>>>>>"
-        print project_reservations
-        print "<<<<<<<<<<<<<<<<<<<<<PROJECT_RESERVATION>>>>>>>>>>>>>>>>>>>"
-
         try:
-            self._driver.rollback(context, project_reservations,
-                                  project_id=project_id,
-                                  user_id=user_id)
             self._driver_domain.rollback(context, domain_reservations,
                                          project_id=project_id,
                                          user_id=user_id)
+            self._driver.rollback(context, project_reservations,
+                                  project_id=project_id,
+                                  user_id=user_id)
         except Exception:
             # NOTE(Vek): Ignoring exceptions here is safe, because the
             # usage resynchronization and the reservation expiration

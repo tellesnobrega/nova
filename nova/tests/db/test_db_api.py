@@ -1054,6 +1054,11 @@ class ModelsObjectComparatorMixin(object):
     def _assertEqualObjects(self, obj1, obj2, ignored_keys=None):
         obj1 = self._dict_from_object(obj1, ignored_keys)
         obj2 = self._dict_from_object(obj2, ignored_keys)
+        print "<<<<<<<<OBJ1>>>>>>>>>"
+        print obj1
+
+        print "<<<<<<<<OBJ2>>>>>>>>>>"
+        print obj2
 
         self.assertEqual(len(obj1),
                          len(obj2),
@@ -1228,6 +1233,8 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
         reservation = db.domain_reservation_create(self.ctxt, **self.values)
         reservation_db = db.domain_reservation_get(self.ctxt,
                                                    self.values['uuid'])
+
+        print reservation, reservation_db
         self._assertEqualObjects(reservation, reservation_db)
 
     def test_domain_reservation_get_nonexistent(self):

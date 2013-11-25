@@ -3383,6 +3383,7 @@ def _reservation_create(context, uuid, usage, project_id, user_id, resource,
 
 def _domain_reservation_create(context, uuid, usage, domain_id, resource,
                         delta, expire, session=None):
+
     reservation_ref = models.DomainReservation()
     reservation_ref.uuid = uuid
     reservation_ref.usage_id = usage['id']
@@ -3390,7 +3391,10 @@ def _domain_reservation_create(context, uuid, usage, domain_id, resource,
     reservation_ref.resource = resource
     reservation_ref.delta = delta
     reservation_ref.expire = expire
+    reservation_ref.updated_at = timeutils.utcnow()
+    reservation_ref.created_at = timeutils.utcnow()
     reservation_ref.save(session=session)
+
     return reservation_ref
 
 

@@ -580,9 +580,9 @@ class DomainReservation(BASE, NovaBase):
     )
     id = Column(Integer, primary_key=True, nullable=False)
 
-    created_at = Column(DateTime)
-    updated_at = Column(DateTime)
-    deleted_at = Column(DateTime)
+    created_at = Column(DateTime(timezone=False))
+    updated_at = Column(DateTime(timezone=False))
+    deleted_at = Column(DateTime(timezone=False))
     deleted = Column(Integer, default=0)
 
     uuid = Column(String(36), nullable=False)
@@ -593,7 +593,7 @@ class DomainReservation(BASE, NovaBase):
     resource = Column(String(255))
 
     delta = Column(Integer, nullable=False)
-    expire = Column(DateTime)
+    expire = Column(DateTime(timezone=False))
 
     usage = relationship(
         "DomainQuotaUsage",

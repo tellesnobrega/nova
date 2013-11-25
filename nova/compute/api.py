@@ -3778,7 +3778,7 @@ class SecurityGroupAPI(base.Base, security_group_base.SecurityGroupBase):
         except exception.OverQuota:
             msg = _("Quota exceeded, too many security groups.")
             self.raise_over_quota(msg)
-        
+
         LOG.audit(_("Create Security Group %s"), name, context=context)
 
         try:

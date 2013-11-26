@@ -75,6 +75,7 @@ def upgrade(migrate_engine):
         try:
             table.create()
             utils.create_shadow_table(migrate_engine, table=table)
+
         except Exception:
             LOG.info(repr(table))
             LOG.exception(_('Exception while creating table.'))

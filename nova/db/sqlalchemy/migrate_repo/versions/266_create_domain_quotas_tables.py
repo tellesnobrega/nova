@@ -152,3 +152,4 @@ def downgrade(migrate_engine):
         except Exception:
             LOG.error(_("Domain table not dropped"))
             raise
+

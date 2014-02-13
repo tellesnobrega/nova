@@ -16,11 +16,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from nova import flags
 from nova import manager
-from nova.openstack.common import importutils
-
-FLAGS = flags.FLAGS
+from nova.network import driver
 
 
 class MetadataManager(manager.Manager):
@@ -31,12 +28,5 @@ class MetadataManager(manager.Manager):
     """
     def __init__(self, *args, **kwargs):
         super(MetadataManager, self).__init__(*args, **kwargs)
-        self.network_driver = importutils.import_module(FLAGS.network_driver)
-
-    def init_host(self):
-        """Perform any initialization.
-
-        Currently, we only add an iptables filter rule for the metadata
-        service.
-        """
+        self.network_driver = driver.load_network_driver()
         self.network_driver.metadata_accept()

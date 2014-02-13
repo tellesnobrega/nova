@@ -41,8 +41,8 @@ Background Concepts for Nova
    vmstates
    il8n
    filter_scheduler
-   multinic
    rpc
+   hooks
 
 Other Resources
 ---------------
@@ -67,15 +67,12 @@ Module Reference
 
    services
    database
-   volume
-   xensmvolume
    compute
    network
    api
    scheduler
    fakes
    nova
-   cloudpipe
    objectstore
    glance
 

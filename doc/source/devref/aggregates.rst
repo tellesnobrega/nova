@@ -1,5 +1,5 @@
 ..
-      Copyright 2012 OpenStack, LLC
+      Copyright 2012 OpenStack Foundation
       Copyright 2012 Citrix Systems, Inc.
       Copyright 2012, The Cloudscaling Group, Inc.
       All Rights Reserved.
@@ -17,18 +17,18 @@
       under the License.
 
 General Host Aggregates
-===============
+=======================
 
 Host aggregates can be regarded as a mechanism to further partition an availability zone; while availability zones are visible to users, host aggregates are only visible to administrators.  Host aggregates started out as a way to use Xen hypervisor resource pools, but has been generalized to provide a mechanism to allow administrators to assign key-value pairs to groups of machines.  Each node can have multiple aggregates, each aggregate can have multiple key-value pairs, and the same key-value pair can be assigned to multiple aggregate.  This information can be used in the scheduler to enable advanced scheduling, to set up xen hypervisor resources pools or to define logical groups for migration.
 
 Xen Pool Host Aggregates
-===============
-Originally all aggregates were Xen resource pools, now a aggregate can be set up as a resource pool by giving the aggregate the correct key-value pair.
+========================
+Originally all aggregates were Xen resource pools, now an aggregate can be set up as a resource pool by giving the aggregate the correct key-value pair.
 
 You can use aggregates for XenServer resource pools when you have multiple compute nodes installed (only XenServer/XCP via xenapi driver is currently supported), and you want to leverage the capabilities of the underlying hypervisor resource pools. For example, you want to enable VM live migration (i.e. VM migration within the pool) or enable host maintenance with zero-downtime for guest instances. Please, note that VM migration across pools (i.e. storage migration) is not yet supported in XenServer/XCP, but will be added when available. Bear in mind that the two migration techniques are not mutually exclusive and can be used in combination for a higher level of flexibility in your cloud management.
 
 Design
-=======
+======
 
 The OSAPI Admin API is extended to support the following operations:
 
@@ -65,7 +65,7 @@ Usage
   * aggregate-add-host       <id> <host>                              Add the host to the specified aggregate.
   * aggregate-remove-host    <id> <host>                              Remove the specified host from the specfied aggregate.
   * aggregate-set-metadata   <id> <key=value> [<key=value> ...]       Update the metadata associated with the aggregate.
-  * aggregate-update         <id> <name> [<availability_zone>]        Update the aggregate's name and optionally availablity zone.
+  * aggregate-update         <id> <name> [<availability_zone>]        Update the aggregate's name and optionally availability zone.
 
   * host-list                                                         List all hosts by service
   * host-update              --maintenance [enable | disable]         Put/resume host into/from maintenance.

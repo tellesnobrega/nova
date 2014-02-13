@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2012, Red Hat, Inc.
+# Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -18,31 +18,66 @@
 Client side of the console RPC API.
 """
 
-from nova import flags
-import nova.openstack.common.rpc.proxy
+from oslo.config import cfg
+from oslo import messaging
+
+from nova import rpc
+
+rpcapi_opts = [
+    cfg.StrOpt('console_topic',
+               default='console',
+               help='The topic console proxy nodes listen on'),
+]
+
+CONF = cfg.CONF
+CONF.register_opts(rpcapi_opts)
+
+rpcapi_cap_opt = cfg.StrOpt('console',
+        help='Set a version cap for messages sent to console services')
+CONF.register_opt(rpcapi_cap_opt, 'upgrade_levels')
 
 
-FLAGS = flags.FLAGS
-
-
-class ConsoleAPI(nova.openstack.common.rpc.proxy.RpcProxy):
+class ConsoleAPI(object):
     '''Client side of the console rpc API.
 
     API version history:
 
         1.0 - Initial version.
+        1.1 - Added get_backdoor_port()
+
+        ... Grizzly and Havana support message version 1.1.  So, any changes to
+        existing methods in 1.x after that point should be done such that they
+        can handle the version_cap being set to 1.1.
+
+        2.0 - Major API rev for Icehouse
     '''
 
-    BASE_RPC_API_VERSION = '1.0'
+    VERSION_ALIASES = {
+        'grizzly': '1.1',
+        'havana': '1.1',
+    }
 
-    def __init__(self, topic=None):
-        topic = topic if topic else FLAGS.console_topic
-        super(ConsoleAPI, self).__init__(
-                topic=topic,
-                default_version=self.BASE_RPC_API_VERSION)
+    def __init__(self, topic=None, server=None):
+        super(ConsoleAPI, self).__init__()
+        topic = topic if topic else CONF.console_topic
+        target = messaging.Target(topic=topic, server=server, version='2.0')
+        version_cap = self.VERSION_ALIASES.get(CONF.upgrade_levels.console,
+                                               CONF.upgrade_levels.console)
+        self.client = rpc.get_client(target, version_cap=version_cap)
+
+    def _get_compat_version(self, current, havana_compat):
+        if not self.client.can_send_version(current):
+            return havana_compat
+        return current
 
     def add_console(self, ctxt, instance_id):
-        self.cast(ctxt, self.make_msg('add_console', instance_id=instance_id))
+        # NOTE(russellb) Havana compat
+        version = self._get_compat_version('2.0', '1.0')
+        cctxt = self.client.prepare(version=version)
+        cctxt.cast(ctxt, 'add_console', instance_id=instance_id)
 
     def remove_console(self, ctxt, console_id):
-        self.cast(ctxt, self.make_msg('remove_console', console_id=console_id))
+        # NOTE(russellb) Havana compat
+        version = self._get_compat_version('2.0', '1.0')
+        cctxt = self.client.prepare(version=version)
+        cctxt.cast(ctxt, 'remove_console', console_id=console_id)

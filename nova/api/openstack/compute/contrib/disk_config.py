@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -12,7 +12,7 @@
 #    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
-#    under the License
+#    under the License.
 
 """Disk Config extension."""
 
@@ -21,7 +21,8 @@ from webob import exc
 from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
-from nova import utils
+from nova.openstack.common.gettextutils import _
+from nova.openstack.common import strutils
 
 ALIAS = 'OS-DCF'
 XMLNS_DCF = "http://docs.openstack.org/compute/ext/disk_config/api/v1.1"
@@ -65,7 +66,7 @@ class ImageDiskConfigController(wsgi.Controller):
             metadata = image['metadata']
             if INTERNAL_DISK_CONFIG in metadata:
                 raw_value = metadata[INTERNAL_DISK_CONFIG]
-                value = utils.bool_from_str(raw_value)
+                value = strutils.bool_from_string(raw_value)
                 image[API_DISK_CONFIG] = disk_config_to_api(value)
 
     @wsgi.extends
@@ -139,7 +140,8 @@ class ServerDiskConfigController(wsgi.Controller):
     def create(self, req, body):
         context = req.environ['nova.context']
         if authorize(context):
-            self._set_disk_config(body['server'])
+            if 'server' in body:
+                self._set_disk_config(body['server'])
             resp_obj = (yield)
             self._show(req, resp_obj)
 
@@ -147,7 +149,8 @@ class ServerDiskConfigController(wsgi.Controller):
     def update(self, req, id, body):
         context = req.environ['nova.context']
         if authorize(context):
-            self._set_disk_config(body['server'])
+            if 'server' in body:
+                self._set_disk_config(body['server'])
             resp_obj = (yield)
             self._show(req, resp_obj)
 
@@ -168,7 +171,7 @@ class ServerDiskConfigController(wsgi.Controller):
 
 
 class Disk_config(extensions.ExtensionDescriptor):
-    """Disk Management Extension"""
+    """Disk Management Extension."""
 
     name = "DiskConfig"
     alias = ALIAS

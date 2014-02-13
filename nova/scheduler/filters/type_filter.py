@@ -21,8 +21,8 @@ from nova.scheduler import filters
 class TypeAffinityFilter(filters.BaseHostFilter):
     """TypeAffinityFilter doesn't allow more then one VM type per host.
 
-    Note: this works best with compute_fill_first_cost_fn_weight
-    (dispersion) set to 1 (-1 by default).
+    Note: this works best with ram_weight_multiplier
+    (spread) set to 1 (default).
     """
 
     def host_passes(self, host_state, filter_properties):
@@ -45,6 +45,9 @@ class AggregateTypeAffinityFilter(filters.BaseHostFilter):
     return True if no instance_type key is set or if the aggregate metadata
     key 'instance_type' has the instance_type name as a value
     """
+
+    # Aggregate data does not change within a request
+    run_filter_once_per_request = True
 
     def host_passes(self, host_state, filter_properties):
         instance_type = filter_properties.get('instance_type')

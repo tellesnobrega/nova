@@ -1,7 +1,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 # Copyright (c) 2011 Citrix Systems, Inc.
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -19,9 +19,9 @@
 
 import base64
 
+from oslo.config import cfg
+
 from nova import exception
-from nova import flags
-from nova.openstack.common import cfg
 from nova.openstack.common import jsonutils
 from nova.virt.vmwareapi import vim_util
 
@@ -29,14 +29,14 @@ from nova.virt.vmwareapi import vim_util
 vmrc_opts = [
     cfg.IntOpt('console_vmrc_port',
                default=443,
-               help="port for VMware VMRC connections"),
+               help="Port for VMware VMRC connections"),
     cfg.IntOpt('console_vmrc_error_retries',
                default=10,
-               help="number of retries for retrieving VMRC information"),
+               help="Number of retries for retrieving VMRC information"),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(vmrc_opts)
+CONF = cfg.CONF
+CONF.register_opts(vmrc_opts)
 
 
 class VMRCConsole(object):
@@ -51,7 +51,7 @@ class VMRCConsole(object):
 
     def get_port(self, context):
         """Get available port for consoles."""
-        return FLAGS.console_vmrc_port
+        return CONF.console_vmrc_port
 
     def setup_console(self, context, console):
         """Sets up console."""

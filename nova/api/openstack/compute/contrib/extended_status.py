@@ -1,4 +1,4 @@
-#   Copyright 2011 OpenStack, LLC.
+#   Copyright 2011 OpenStack Foundation
 #
 #   Licensed under the Apache License, Version 2.0 (the "License"); you may
 #   not use this file except in compliance with the License. You may obtain
@@ -18,12 +18,7 @@ from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
 from nova import compute
-from nova import flags
-from nova.openstack.common import log as logging
 
-
-FLAGS = flags.FLAGS
-LOG = logging.getLogger(__name__)
 authorize = extensions.soft_extension_authorizer('compute', 'extended_status')
 
 
@@ -64,7 +59,7 @@ class ExtendedStatusController(wsgi.Controller):
 
 
 class Extended_status(extensions.ExtensionDescriptor):
-    """Extended Status support"""
+    """Extended Status support."""
 
     name = "ExtendedStatus"
     alias = "OS-EXT-STS"

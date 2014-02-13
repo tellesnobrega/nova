@@ -1,4 +1,4 @@
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -22,6 +22,7 @@ from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova import compute
 from nova import exception
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 
 
@@ -84,7 +85,7 @@ class MultinicController(wsgi.Controller):
 # Note: The class name is as it has to be for this to be loaded as an
 # extension--only first character capitalized.
 class Multinic(extensions.ExtensionDescriptor):
-    """Multiple network support"""
+    """Multiple network support."""
 
     name = "Multinic"
     alias = "NMN"

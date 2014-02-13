@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 # Copyright (c) 2010 Citrix Systems, Inc.
-# Copyright 2010 OpenStack LLC.
+# Copyright 2010 OpenStack Foundation
 # Copyright 2010 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration.
 # All Rights Reserved.
@@ -27,18 +27,16 @@ try:
 except ImportError:
     import simplejson as json
 
-import logging
-import os
-import subprocess
+import utils    # noqa
 
 import XenAPIPlugin
 
-import pluginlib_nova as pluginlib
+import pluginlib_nova as pluginlib  # noqa
 pluginlib.configure_logging("xenstore")
 
 
 class XenstoreError(pluginlib.PluginError):
-    """Errors that occur when calling xenstore-* through subprocesses"""
+    """Errors that occur when calling xenstore-* through subprocesses."""
 
     def __init__(self, cmd, return_code, stderr, stdout):
         msg = "cmd: %s; returncode: %d; stderr: %s; stdout: %s"
@@ -66,17 +64,18 @@ def jsonify(fnc):
 
 def _record_exists(arg_dict):
     """Returns whether or not the given record exists. The record path
-    is determined from the given path and dom_id in the arg_dict."""
+    is determined from the given path and dom_id in the arg_dict.
+    """
     cmd = ["xenstore-exists", "/local/domain/%(dom_id)s/%(path)s" % arg_dict]
     try:
-        ret, result = _run_command(cmd)
-    except XenstoreError, e:
+        _run_command(cmd)
+        return True
+    except XenstoreError, e:    # noqa
         if e.stderr == '':
             # if stderr was empty, this just means the path did not exist
             return False
         # otherwise there was a real problem
         raise
-    return True
 
 
 @jsonify
@@ -89,9 +88,9 @@ def read_record(self, arg_dict):
     """
     cmd = ["xenstore-read", "/local/domain/%(dom_id)s/%(path)s" % arg_dict]
     try:
-        ret, result = _run_command(cmd)
+        result = _run_command(cmd)
         return result.strip()
-    except XenstoreError, e:
+    except XenstoreError, e:    # noqa
         if not arg_dict.get("ignore_missing_path", False):
             raise
         if not _record_exists(arg_dict):
@@ -99,7 +98,7 @@ def read_record(self, arg_dict):
         # Just try again in case the agent write won the race against
         # the record_exists check. If this fails again, it will likely raise
         # an equally meaningful XenstoreError as the one we just caught
-        ret, result = _run_command(cmd)
+        result = _run_command(cmd)
         return result.strip()
 
 
@@ -128,14 +127,14 @@ def list_records(self, arg_dict):
     dirpath = "/local/domain/%(dom_id)s/%(path)s" % arg_dict
     cmd = ["xenstore-ls", dirpath.rstrip("/")]
     try:
-        ret, recs = _run_command(cmd)
-    except XenstoreError, e:
+        recs = _run_command(cmd)
+    except XenstoreError, e:    # noqa
         if not _record_exists(arg_dict):
             return {}
         # Just try again in case the path was created in between
         # the "ls" and the existence check. If this fails again, it will
         # likely raise an equally meaningful XenstoreError
-        ret, recs = _run_command(cmd)
+        recs = _run_command(cmd)
     base_path = arg_dict["path"]
     paths = _paths_from_ls(recs)
     ret = {}
@@ -159,8 +158,13 @@ def delete_record(self, arg_dict):
     VM and the specified path from xenstore.
     """
     cmd = ["xenstore-rm", "/local/domain/%(dom_id)s/%(path)s" % arg_dict]
-    ret, result = _run_command(cmd)
-    return result
+    try:
+        return _run_command(cmd)
+    except XenstoreError, e:    # noqa
+        if 'could not remove path' in e.stderr:
+            # Entry already gone.  We're good to go.
+            return ''
+        raise
 
 
 def _paths_from_ls(recs):
@@ -168,7 +172,6 @@ def _paths_from_ls(recs):
     useful. This method cleans that up into a dict with each path
     as the key, and the associated string as the value.
     """
-    ret = {}
     last_nm = ""
     level = 0
     path = []
@@ -197,19 +200,12 @@ def _paths_from_ls(recs):
 
 
 def _run_command(cmd):
-    """Abstracts out the basics of issuing system commands. If the command
-    returns anything in stderr, a PluginError is raised with that information.
-    Otherwise, a tuple of (return code, stdout data) is returned.
+    """Wrap utils.run_command to raise XenstoreError on failure
     """
-    logging.info(' '.join(cmd))
-    pipe = subprocess.PIPE
-    proc = subprocess.Popen(cmd, stdin=pipe, stdout=pipe, stderr=pipe,
-            close_fds=True)
-    out, err = proc.communicate()
-    if proc.returncode is not os.EX_OK:
-        raise XenstoreError(cmd, proc.returncode, err, out)
-    return proc.returncode, out
-
+    try:
+        return utils.run_command(cmd)
+    except utils.SubprocessException, e:    # noqa
+        raise XenstoreError(e.cmdline, e.ret, e.err, e.out)
 
 if __name__ == "__main__":
     XenAPIPlugin.dispatch(

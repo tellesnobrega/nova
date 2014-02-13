@@ -1,7 +1,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 # Copyright (c) 2011 Citrix Systems, Inc.
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -18,6 +18,10 @@
 """
 Exception classes and SOAP response error checking module.
 """
+from nova import exception
+
+from nova.openstack.common.gettextutils import _
+
 
 FAULT_NOT_AUTHENTICATED = "NotAuthenticated"
 FAULT_ALREADY_EXISTS = "AlreadyExists"
@@ -37,6 +41,11 @@ class VimException(Exception):
 
 class SessionOverLoadException(VimException):
     """Session Overload Exception."""
+    pass
+
+
+class SessionConnectionException(VimException):
+    """Session Connection Exception."""
     pass
 
 
@@ -65,9 +74,9 @@ class FaultCheckers(object):
     """
 
     @staticmethod
-    def retrieveproperties_fault_checker(resp_obj):
+    def retrievepropertiesex_fault_checker(resp_obj):
         """
-        Checks the RetrieveProperties response for errors. Certain faults
+        Checks the RetrievePropertiesEx response for errors. Certain faults
         are sent as part of the SOAP body as property of missingSet.
         For example NotAuthenticated fault.
         """
@@ -81,7 +90,7 @@ class FaultCheckers(object):
             # fault to NotAuthenticated fault.
             fault_list = ["NotAuthenticated"]
         else:
-            for obj_cont in resp_obj:
+            for obj_cont in resp_obj.objects:
                 if hasattr(obj_cont, "missingSet"):
                     for missing_elem in obj_cont.missingSet:
                         fault_type = missing_elem.fault.fault.__class__
@@ -91,5 +100,27 @@ class FaultCheckers(object):
         if fault_list:
             exc_msg_list = ', '.join(fault_list)
             raise VimFaultException(fault_list, Exception(_("Error(s) %s "
-                    "occurred in the call to RetrieveProperties") %
+                    "occurred in the call to RetrievePropertiesEx") %
                     exc_msg_list))
+
+
+class VMwareDriverException(exception.NovaException):
+    """Base class for all exceptions raised by the VMware Driver.
+
+    All exceptions raised by the VMwareAPI drivers should raise
+    an exception descended from this class as a root. This will
+    allow the driver to potentially trap problems related to its
+    own internal configuration before halting the nova-compute
+    node.
+    """
+    msg_fmt = _("VMware Driver fault.")
+
+
+class VMwareDriverConfigurationException(VMwareDriverException):
+    """Base class for all configuration exceptions.
+    """
+    msg_fmt = _("VMware Driver configuration fault.")
+
+
+class UseLinkedCloneConfigurationFault(VMwareDriverConfigurationException):
+    msg_fmt = _("No default value for use_linked_clone found.")

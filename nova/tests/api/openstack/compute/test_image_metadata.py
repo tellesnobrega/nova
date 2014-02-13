@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -15,16 +15,15 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from oslo.config import cfg
 import webob
 
 from nova.api.openstack.compute import image_metadata
-from nova import flags
 from nova.openstack.common import jsonutils
 from nova import test
 from nova.tests.api.openstack import fakes
 
-
-FLAGS = flags.FLAGS
+CONF = cfg.CONF
 
 
 class ImageMetaDataTest(test.TestCase):
@@ -43,7 +42,7 @@ class ImageMetaDataTest(test.TestCase):
     def test_show(self):
         req = fakes.HTTPRequest.blank('/v2/fake/images/123/metadata/key1')
         res_dict = self.controller.show(req, '123', 'key1')
-        self.assertTrue('meta' in res_dict)
+        self.assertIn('meta', res_dict)
         self.assertEqual(len(res_dict['meta']), 1)
         self.assertEqual('value1', res_dict['meta']['key1'])
 
@@ -134,7 +133,7 @@ class ImageMetaDataTest(test.TestCase):
         req = fakes.HTTPRequest.blank('/v2/fake/images/123/metadata/key1')
         req.method = 'PUT'
         overload = {}
-        for num in range(FLAGS.quota_metadata_items + 1):
+        for num in range(CONF.quota_metadata_items + 1):
             overload['key%s' % num] = 'value%s' % num
         body = {'meta': overload}
         req.body = jsonutils.dumps(body)
@@ -158,7 +157,7 @@ class ImageMetaDataTest(test.TestCase):
         req.method = 'DELETE'
         res = self.controller.delete(req, '123', 'key1')
 
-        self.assertEqual(None, res)
+        self.assertIsNone(res)
 
     def test_delete_not_found(self):
         req = fakes.HTTPRequest.blank('/v2/fake/images/123/metadata/blah')
@@ -176,7 +175,7 @@ class ImageMetaDataTest(test.TestCase):
 
     def test_too_many_metadata_items_on_create(self):
         data = {"metadata": {}}
-        for num in range(FLAGS.quota_metadata_items + 1):
+        for num in range(CONF.quota_metadata_items + 1):
             data['metadata']['key%i' % num] = "blah"
         req = fakes.HTTPRequest.blank('/v2/fake/images/123/metadata')
         req.method = 'POST'
@@ -198,3 +197,45 @@ class ImageMetaDataTest(test.TestCase):
 
         self.assertRaises(webob.exc.HTTPRequestEntityTooLarge,
                           self.controller.update, req, '123', 'blah', body)
+
+    def test_image_not_authorized_update(self):
+        image_id = 131
+        # see nova.tests.api.openstack.fakes:_make_image_fixtures
+
+        req = fakes.HTTPRequest.blank('/v2/fake/images/%s/metadata/key1'
+                                      % image_id)
+        req.method = 'PUT'
+        body = {"meta": {"key1": "value1"}}
+        req.body = jsonutils.dumps(body)
+        req.headers["content-type"] = "application/json"
+
+        self.assertRaises(webob.exc.HTTPForbidden,
+                          self.controller.update, req, image_id, 'key1', body)
+
+    def test_image_not_authorized_update_all(self):
+        image_id = 131
+        # see nova.tests.api.openstack.fakes:_make_image_fixtures
+
+        req = fakes.HTTPRequest.blank('/v2/fake/images/%s/metadata/key1'
+                                      % image_id)
+        req.method = 'PUT'
+        body = {"meta": {"key1": "value1"}}
+        req.body = jsonutils.dumps(body)
+        req.headers["content-type"] = "application/json"
+
+        self.assertRaises(webob.exc.HTTPForbidden,
+                          self.controller.update_all, req, image_id, body)
+
+    def test_image_not_authorized_create(self):
+        image_id = 131
+        # see nova.tests.api.openstack.fakes:_make_image_fixtures
+
+        req = fakes.HTTPRequest.blank('/v2/fake/images/%s/metadata/key1'
+                                      % image_id)
+        req.method = 'POST'
+        body = {"meta": {"key1": "value1"}}
+        req.body = jsonutils.dumps(body)
+        req.headers["content-type"] = "application/json"
+
+        self.assertRaises(webob.exc.HTTPForbidden,
+                          self.controller.create, req, image_id, body)

@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2012 OpenStack LLC.
+# Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -18,12 +18,16 @@
 
 import datetime
 
+from oslo.config import cfg
+import webob.exc
+
 from nova.api.openstack import extensions
-from nova import db
-from nova import flags
+from nova import compute
+from nova.openstack.common.gettextutils import _
 from nova import utils
 
-FLAGS = flags.FLAGS
+CONF = cfg.CONF
+CONF.import_opt('compute_topic', 'nova.compute.rpcapi')
 
 
 authorize = extensions.extension_authorizer('compute',
@@ -31,6 +35,8 @@ authorize = extensions.extension_authorizer('compute',
 
 
 class InstanceUsageAuditLogController(object):
+    def __init__(self):
+        self.host_api = compute.HostAPI()
 
     def index(self, req):
         context = req.environ['nova.context']
@@ -75,12 +81,13 @@ class InstanceUsageAuditLogController(object):
             begin = defbegin
         if end is None:
             end = defend
-        task_logs = db.task_log_get_all(context, "instance_usage_audit",
-                                        begin, end)
+        task_logs = self.host_api.task_log_get_all(context,
+                                                   "instance_usage_audit",
+                                                   begin, end)
         # We do this this way to include disabled compute services,
         # which can have instances on them. (mdragon)
-        services = [svc for svc in db.service_get_all(context)
-                    if svc['topic'] == 'compute']
+        filters = {'topic': CONF.compute_topic}
+        services = self.host_api.service_get_all(context, filters=filters)
         hosts = set(serv['host'] for serv in services)
         seen_hosts = set()
         done_hosts = set()
@@ -119,7 +126,7 @@ class InstanceUsageAuditLogController(object):
 
 
 class Instance_usage_audit_log(extensions.ExtensionDescriptor):
-    """Admin-only Task Log Monitoring"""
+    """Admin-only Task Log Monitoring."""
     name = "OSInstanceUsageAuditLog"
     alias = "os-instance_usage_audit_log"
     namespace = "http://docs.openstack.org/ext/services/api/v1.1"

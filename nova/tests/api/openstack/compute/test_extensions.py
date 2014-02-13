@@ -1,7 +1,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 # Copyright (c) 2011 X.commerce, a business unit of eBay Inc.
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -18,6 +18,7 @@
 
 import iso8601
 from lxml import etree
+from oslo.config import cfg
 import webob
 
 from nova.api.openstack import compute
@@ -25,13 +26,14 @@ from nova.api.openstack.compute import extensions as compute_extensions
 from nova.api.openstack import extensions as base_extensions
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
-from nova import flags
+from nova import exception
 from nova.openstack.common import jsonutils
+import nova.policy
 from nova import test
 from nova.tests.api.openstack import fakes
+from nova.tests import matchers
 
-
-FLAGS = flags.FLAGS
+CONF = cfg.CONF
 
 NS = "{http://docs.openstack.org/common/api/v1.0}"
 ATOMNS = "{http://www.w3.org/2005/Atom}"
@@ -47,7 +49,7 @@ class StubController(object):
     def index(self, req):
         return self.body
 
-    def create(self, req):
+    def create(self, req, body):
         msg = 'All aboard the fail train!'
         raise webob.exc.HTTPBadRequest(explanation=msg)
 
@@ -98,7 +100,7 @@ class StubLateExtensionController(wsgi.Controller):
 
 
 class StubExtensionManager(object):
-    """Provides access to Tweedle Beetles"""
+    """Provides access to Tweedle Beetles."""
 
     name = "Tweedle Beetle Extension"
     alias = "TWDLBETL"
@@ -141,12 +143,30 @@ class StubExtensionManager(object):
 class ExtensionTestCase(test.TestCase):
     def setUp(self):
         super(ExtensionTestCase, self).setUp()
-        ext_list = FLAGS.osapi_compute_extension[:]
+        ext_list = CONF.osapi_compute_extension[:]
         fox = ('nova.tests.api.openstack.compute.extensions.'
                'foxinsocks.Foxinsocks')
         if fox not in ext_list:
             ext_list.append(fox)
             self.flags(osapi_compute_extension=ext_list)
+        self.fake_context = nova.context.RequestContext('fake', 'fake')
+
+    def test_extension_authorizer_throws_exception_if_policy_fails(self):
+        target = {'project_id': '1234',
+                  'user_id': '5678'}
+        self.mox.StubOutWithMock(nova.policy, 'enforce')
+        nova.policy.enforce(self.fake_context,
+                            "compute_extension:used_limits_for_admin",
+                            target).AndRaise(
+            exception.PolicyNotAuthorized(
+                action="compute_extension:used_limits_for_admin"))
+        ('compute', 'used_limits_for_admin')
+        self.mox.ReplayAll()
+        authorize = base_extensions.extension_authorizer('compute',
+                                                        'used_limits_for_admin'
+        )
+        self.assertRaises(exception.PolicyNotAuthorized, authorize,
+                          self.fake_context, target=target)
 
 
 class ExtensionControllerTest(ExtensionTestCase):
@@ -156,45 +176,67 @@ class ExtensionControllerTest(ExtensionTestCase):
         self.ext_list = [
             "AdminActions",
             "Aggregates",
+            "AssistedVolumeSnapshots",
             "AvailabilityZone",
+            "Agents",
             "Certificates",
             "Cloudpipe",
-            "Console_output",
+            "CloudpipeUpdate",
+            "ConsoleOutput",
             "Consoles",
             "Createserverext",
             "DeferredDelete",
             "DiskConfig",
+            "ExtendedAvailabilityZone",
+            "ExtendedFloatingIps",
+            "ExtendedIps",
+            "ExtendedIpsMac",
+            "ExtendedVIFNet",
+            "Evacuate",
             "ExtendedStatus",
+            "ExtendedVolumes",
             "ExtendedServerAttributes",
+            "FixedIPs",
+            "FlavorAccess",
+            "FlavorDisabled",
             "FlavorExtraSpecs",
             "FlavorExtraData",
             "FlavorManage",
-            "Floating_ips",
-            "Floating_ip_dns",
-            "Floating_ip_pools",
+            "FlavorRxtx",
+            "FlavorSwap",
+            "FloatingIps",
+            "FloatingIpDns",
+            "FloatingIpPools",
+            "FloatingIpsBulk",
             "Fox In Socks",
             "Hosts",
+            "ImageSize",
+            "InstanceActions",
             "Keypairs",
             "Multinic",
             "MultipleCreate",
-            "Networks",
             "QuotaClasses",
             "Quotas",
+            "ExtendedQuotas",
             "Rescue",
             "SchedulerHints",
+            "SecurityGroupDefaultRules",
             "SecurityGroups",
             "ServerDiagnostics",
+            "ServerPassword",
             "ServerStartStop",
+            "Services",
             "SimpleTenantUsage",
+            "UsedLimits",
             "UserData",
             "VirtualInterfaces",
+            "VolumeAttachmentUpdate",
             "Volumes",
-            "VolumeTypes",
             ]
         self.ext_list.sort()
 
     def test_list_extensions_json(self):
-        app = compute.APIRouter()
+        app = compute.APIRouter(init_only=('extensions',))
         request = webob.Request.blank("/fake/extensions")
         response = request.get_response(app)
         self.assertEqual(200, response.status_int)
@@ -217,7 +259,7 @@ class ExtensionControllerTest(ExtensionTestCase):
                 'namespace': 'http://www.fox.in.socks/api/ext/pie/v1.0',
                 'name': 'Fox In Socks',
                 'updated': '2011-01-22T13:25:27-06:00',
-                'description': 'The Fox In Socks Extension',
+                'description': 'The Fox In Socks Extension.',
                 'alias': 'FOXNSOX',
                 'links': []
             },
@@ -231,7 +273,7 @@ class ExtensionControllerTest(ExtensionTestCase):
             self.assertEqual(output['extension']['alias'], ext['alias'])
 
     def test_get_extension_json(self):
-        app = compute.APIRouter()
+        app = compute.APIRouter(init_only=('extensions',))
         request = webob.Request.blank("/fake/extensions/FOXNSOX")
         response = request.get_response(app)
         self.assertEqual(200, response.status_int)
@@ -241,18 +283,18 @@ class ExtensionControllerTest(ExtensionTestCase):
                 "namespace": "http://www.fox.in.socks/api/ext/pie/v1.0",
                 "name": "Fox In Socks",
                 "updated": "2011-01-22T13:25:27-06:00",
-                "description": "The Fox In Socks Extension",
+                "description": "The Fox In Socks Extension.",
                 "alias": "FOXNSOX",
                 "links": []})
 
     def test_get_non_existing_extension_json(self):
-        app = compute.APIRouter()
+        app = compute.APIRouter(init_only=('extensions',))
         request = webob.Request.blank("/fake/extensions/4")
         response = request.get_response(app)
         self.assertEqual(404, response.status_int)
 
     def test_list_extensions_xml(self):
-        app = compute.APIRouter()
+        app = compute.APIRouter(init_only=('servers', 'flavors', 'extensions'))
         request = webob.Request.blank("/fake/extensions")
         request.accept = "application/xml"
         response = request.get_response(app)
@@ -263,7 +305,7 @@ class ExtensionControllerTest(ExtensionTestCase):
 
         # Make sure we have all the extensions, extras extensions being OK.
         exts = root.findall('{0}extension'.format(NS))
-        self.assert_(len(exts) >= len(self.ext_list))
+        self.assertTrue(len(exts) >= len(self.ext_list))
 
         # Make sure that at least Fox in Sox is correct.
         (fox_ext, ) = [x for x in exts if x.get('alias') == 'FOXNSOX']
@@ -272,12 +314,12 @@ class ExtensionControllerTest(ExtensionTestCase):
             'http://www.fox.in.socks/api/ext/pie/v1.0')
         self.assertEqual(fox_ext.get('updated'), '2011-01-22T13:25:27-06:00')
         self.assertEqual(fox_ext.findtext('{0}description'.format(NS)),
-            'The Fox In Socks Extension')
+            'The Fox In Socks Extension.')
 
         xmlutil.validate_schema(root, 'extensions')
 
     def test_get_extension_xml(self):
-        app = compute.APIRouter()
+        app = compute.APIRouter(init_only=('servers', 'flavors', 'extensions'))
         request = webob.Request.blank("/fake/extensions/FOXNSOX")
         request.accept = "application/xml"
         response = request.get_response(app)
@@ -292,7 +334,7 @@ class ExtensionControllerTest(ExtensionTestCase):
             'http://www.fox.in.socks/api/ext/pie/v1.0')
         self.assertEqual(root.get('updated'), '2011-01-22T13:25:27-06:00')
         self.assertEqual(root.findtext('{0}description'.format(NS)),
-            'The Fox In Socks Extension')
+            'The Fox In Socks Extension.')
 
         xmlutil.validate_schema(root, 'extension')
 
@@ -343,7 +385,7 @@ class ResourceExtensionTest(ExtensionTestCase):
                 "code": 400
             }
         }
-        self.assertDictMatch(expected, body)
+        self.assertThat(expected, matchers.DictMatches(body))
 
     def test_non_exist_resource(self):
         res_ext = base_extensions.ResourceExtension('tweedles',
@@ -361,7 +403,7 @@ class ResourceExtensionTest(ExtensionTestCase):
                 "code": 404
             }
         }
-        self.assertDictMatch(expected, body)
+        self.assertThat(expected, matchers.DictMatches(body))
 
 
 class InvalidExtension(object):
@@ -393,7 +435,7 @@ class ExtensionManagerTest(ExtensionTestCase):
 class ActionExtensionTest(ExtensionTestCase):
 
     def _send_server_action_request(self, url, body):
-        app = compute.APIRouter()
+        app = compute.APIRouter(init_only=('servers',))
         request = webob.Request.blank(url)
         request.method = 'POST'
         request.content_type = 'application/json'
@@ -426,7 +468,7 @@ class ActionExtensionTest(ExtensionTestCase):
                 "code": 400
             }
         }
-        self.assertDictMatch(expected, body)
+        self.assertThat(expected, matchers.DictMatches(body))
 
     def test_non_exist_action(self):
         body = dict(blah=dict(name="test"))
@@ -447,7 +489,7 @@ class ActionExtensionTest(ExtensionTestCase):
                 "code": 400
             }
         }
-        self.assertDictMatch(expected, body)
+        self.assertThat(expected, matchers.DictMatches(body))
 
 
 class RequestExtensionTest(ExtensionTestCase):
@@ -473,7 +515,7 @@ class RequestExtensionTest(ExtensionTestCase):
 
     def test_get_resources_with_mgr(self):
 
-        app = fakes.wsgi_app()
+        app = fakes.wsgi_app(init_only=('flavors',))
         request = webob.Request.blank("/v2/fake/flavors/1?chewing=newblue")
         request.environ['api.version'] = '2'
         response = request.get_response(app)
@@ -662,3 +704,31 @@ class ExtensionsXMLSerializerTest(test.TestCase):
                     self.assertEqual(link_nodes[i].get(key), value)
 
         xmlutil.validate_schema(root, 'extensions')
+
+
+class ExtensionControllerIdFormatTest(test.TestCase):
+
+    def _bounce_id(self, test_id):
+
+        class BounceController(object):
+            def show(self, req, id):
+                return id
+        res_ext = base_extensions.ResourceExtension('bounce',
+                                                    BounceController())
+        manager = StubExtensionManager(res_ext)
+        app = compute.APIRouter(manager)
+        request = webob.Request.blank("/fake/bounce/%s" % test_id)
+        response = request.get_response(app)
+        return response.body
+
+    def test_id_with_xml_format(self):
+        result = self._bounce_id('foo.xml')
+        self.assertEqual(result, 'foo')
+
+    def test_id_with_json_format(self):
+        result = self._bounce_id('foo.json')
+        self.assertEqual(result, 'foo')
+
+    def test_id_with_bad_format(self):
+        result = self._bounce_id('foo.bad')
+        self.assertEqual(result, 'foo.bad')

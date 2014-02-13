@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 # Copyright 2011 Justin Santa Barbara
 # All Rights Reserved.
 #
@@ -16,8 +16,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import abc
+import functools
 import os
 
+import six
 import webob.dec
 import webob.exc
 
@@ -25,14 +28,12 @@ import nova.api.openstack
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
 from nova import exception
-from nova import flags
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import importutils
 from nova.openstack.common import log as logging
 import nova.policy
 
-
 LOG = logging.getLogger(__name__)
-FLAGS = flags.FLAGS
 
 
 class ExtensionDescriptor(object):
@@ -151,7 +152,7 @@ class ExtensionsResource(wsgi.Resource):
     @wsgi.serializers(xml=ExtensionsTemplate)
     def index(self, req):
         extensions = []
-        for _alias, ext in self.extension_manager.extensions.iteritems():
+        for ext in self.extension_manager.sorted_extensions():
             extensions.append(self._translate(ext))
         return dict(extensions=extensions)
 
@@ -168,17 +169,23 @@ class ExtensionsResource(wsgi.Resource):
     def delete(self, req, id):
         raise webob.exc.HTTPNotFound()
 
-    def create(self, req):
+    def create(self, req, body):
         raise webob.exc.HTTPNotFound()
 
 
 class ExtensionManager(object):
     """Load extensions from the configured extension path.
 
-    See nova/tests/api/openstack/extensions/foxinsocks/extension.py for an
+    See nova/tests/api/openstack/volume/extensions/foxinsocks.py or an
     example extension implementation.
 
     """
+    def sorted_extensions(self):
+        if self.sorted_ext_list is None:
+            self.sorted_ext_list = sorted(self.extensions.iteritems())
+
+        for _alias, ext in self.sorted_ext_list:
+            yield ext
 
     def is_loaded(self, alias):
         return alias in self.extensions
@@ -195,6 +202,7 @@ class ExtensionManager(object):
             raise exception.NovaException("Found duplicate extension: %s"
                                           % alias)
         self.extensions[alias] = ext
+        self.sorted_ext_list = None
 
     def get_resources(self):
         """Returns a list of ResourceExtension objects."""
@@ -202,8 +210,7 @@ class ExtensionManager(object):
         resources = []
         resources.append(ResourceExtension('extensions',
                                            ExtensionsResource(self)))
-
-        for ext in self.extensions.values():
+        for ext in self.sorted_extensions():
             try:
                 resources.extend(ext.get_resources())
             except AttributeError:
@@ -215,13 +222,14 @@ class ExtensionManager(object):
     def get_controller_extensions(self):
         """Returns a list of ControllerExtension objects."""
         controller_exts = []
-        for ext in self.extensions.values():
+        for ext in self.sorted_extensions():
             try:
-                controller_exts.extend(ext.get_controller_extensions())
+                get_ext_method = ext.get_controller_extensions
             except AttributeError:
                 # NOTE(Vek): Extensions aren't required to have
                 # controller extensions
-                pass
+                continue
+            controller_exts.extend(get_ext_method())
         return controller_exts
 
     def _check_extension(self, extension):
@@ -250,7 +258,7 @@ class ExtensionManager(object):
 
         LOG.debug(_("Loading extension %s"), ext_factory)
 
-        if isinstance(ext_factory, basestring):
+        if isinstance(ext_factory, six.string_types):
             # Load the factory
             factory = importutils.import_class(ext_factory)
         else:
@@ -270,7 +278,8 @@ class ExtensionManager(object):
                 self.load_extension(ext_factory)
             except Exception as exc:
                 LOG.warn(_('Failed to load extension %(ext_factory)s: '
-                           '%(exc)s') % locals())
+                           '%(exc)s'),
+                         {'ext_factory': ext_factory, 'exc': exc})
 
 
 class ControllerExtension(object):
@@ -291,7 +300,7 @@ class ResourceExtension(object):
 
     def __init__(self, collection, controller=None, parent=None,
                  collection_actions=None, member_actions=None,
-                 custom_routes_fn=None, inherits=None):
+                 custom_routes_fn=None, inherits=None, member_name=None):
         if not collection_actions:
             collection_actions = {}
         if not member_actions:
@@ -303,18 +312,7 @@ class ResourceExtension(object):
         self.member_actions = member_actions
         self.custom_routes_fn = custom_routes_fn
         self.inherits = inherits
-
-
-def wrap_errors(fn):
-    """Ensure errors are not passed along."""
-    def wrapped(*args, **kwargs):
-        try:
-            return fn(*args, **kwargs)
-        except webob.exc.HTTPException:
-            raise
-        except Exception:
-            raise webob.exc.HTTPInternalServerError()
-    return wrapped
+        self.member_name = member_name
 
 
 def load_standard_extensions(ext_mgr, logger, path, package, ext_list=None):
@@ -351,19 +349,18 @@ def load_standard_extensions(ext_mgr, logger, path, package, ext_list=None):
                 ext_mgr.load_extension(classpath)
             except Exception as exc:
                 logger.warn(_('Failed to load extension %(classpath)s: '
-                              '%(exc)s') % locals())
+                              '%(exc)s'),
+                            {'classpath': classpath, 'exc': exc})
 
         # Now, let's consider any subdirectories we may have...
         subdirs = []
         for dname in dirnames:
             # Skip it if it does not have __init__.py
-            if not os.path.exists(os.path.join(dirpath, dname,
-                                               '__init__.py')):
+            if not os.path.exists(os.path.join(dirpath, dname, '__init__.py')):
                 continue
 
             # If it has extension(), delegate...
-            ext_name = ("%s%s.%s.extension" %
-                        (package, relpkg, dname))
+            ext_name = "%s%s.%s.extension" % (package, relpkg, dname)
             try:
                 ext = importutils.import_class(ext_name)
             except ImportError:
@@ -374,30 +371,125 @@ def load_standard_extensions(ext_mgr, logger, path, package, ext_list=None):
                 try:
                     ext(ext_mgr)
                 except Exception as exc:
-                    logger.warn(_('Failed to load extension %(ext_name)s: '
-                                  '%(exc)s') % locals())
+                    logger.warn(_('Failed to load extension %(ext_name)s:'
+                                  '%(exc)s'),
+                                {'ext_name': ext_name, 'exc': exc})
 
         # Update the list of directories we'll explore...
         dirnames[:] = subdirs
 
 
 def extension_authorizer(api_name, extension_name):
-    def authorize(context, target=None):
+    def authorize(context, target=None, action=None):
         if target is None:
             target = {'project_id': context.project_id,
                       'user_id': context.user_id}
-        action = '%s_extension:%s' % (api_name, extension_name)
-        nova.policy.enforce(context, action, target)
+        if action is None:
+            act = '%s_extension:%s' % (api_name, extension_name)
+        else:
+            act = '%s_extension:%s:%s' % (api_name, extension_name, action)
+        nova.policy.enforce(context, act, target)
     return authorize
 
 
 def soft_extension_authorizer(api_name, extension_name):
     hard_authorize = extension_authorizer(api_name, extension_name)
 
-    def authorize(context):
+    def authorize(context, action=None):
         try:
-            hard_authorize(context)
+            hard_authorize(context, action=action)
             return True
         except exception.NotAuthorized:
             return False
     return authorize
+
+
+@six.add_metaclass(abc.ABCMeta)
+class V3APIExtensionBase(object):
+    """Abstract base class for all V3 API extensions.
+
+    All V3 API extensions must derive from this class and implement
+    the abstract methods get_resources and get_controller_extensions
+    even if they just return an empty list. The extensions must also
+    define the abstract properties.
+    """
+
+    def __init__(self, extension_info):
+        self.extension_info = extension_info
+
+    @abc.abstractmethod
+    def get_resources(self):
+        """Return a list of resources extensions.
+
+        The extensions should return a list of ResourceExtension
+        objects. This list may be empty.
+        """
+        pass
+
+    @abc.abstractmethod
+    def get_controller_extensions(self):
+        """Return a list of controller extensions.
+
+        The extensions should return a list of ControllerExtension
+        objects. This list may be empty.
+        """
+        pass
+
+    @abc.abstractproperty
+    def name(self):
+        """Name of the extension."""
+        pass
+
+    @abc.abstractproperty
+    def alias(self):
+        """Alias for the extension."""
+        pass
+
+    @abc.abstractproperty
+    def version(self):
+        """Version of the extension."""
+        pass
+
+
+def expected_errors(errors):
+    """Decorator for v3 API methods which specifies expected exceptions.
+
+    Specify which exceptions may occur when an API method is called. If an
+    unexpected exception occurs then return a 500 instead and ask the user
+    of the API to file a bug report.
+    """
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapped(*args, **kwargs):
+            try:
+                return f(*args, **kwargs)
+            except Exception as exc:
+                if isinstance(exc, webob.exc.WSGIHTTPException):
+                    if isinstance(errors, int):
+                        t_errors = (errors,)
+                    else:
+                        t_errors = errors
+                    if exc.code in t_errors:
+                        raise
+                elif isinstance(exc, exception.PolicyNotAuthorized):
+                    # Note(cyeoh): Special case to handle
+                    # PolicyNotAuthorized exceptions so every
+                    # extension method does not need to wrap authorize
+                    # calls. ResourceExceptionHandler silently
+                    # converts NotAuthorized to HTTPForbidden
+                    raise
+                elif isinstance(exc, exception.ValidationError):
+                    # Note(oomichi): Handle a validation error, which
+                    # happens due to invalid API parameters, as an
+                    # expected error.
+                    raise
+
+                LOG.exception(_("Unexpected exception in API method"))
+                msg = _('Unexpected API Error. Please report this at '
+                    'http://bugs.launchpad.net/nova/ and attach the Nova '
+                    'API log if possible.\n%s') % type(exc)
+                raise webob.exc.HTTPInternalServerError(explanation=msg)
+
+        return wrapped
+
+    return decorator

@@ -12,14 +12,23 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-"""Implementation of a fake volume API"""
+"""Implementation of a fake volume API."""
+
+import uuid
+
+from oslo.config import cfg
 
 from nova import exception
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 from nova.openstack.common import timeutils
-from nova import utils
+
 
 LOG = logging.getLogger(__name__)
+
+CONF = cfg.CONF
+CONF.import_opt('cinder_cross_az_attach',
+                'nova.volume.cinder')
 
 
 class fake_volume():
@@ -27,21 +36,21 @@ class fake_volume():
     instance_uuid = '4a3cd441-b9c2-11e1-afa6-0800200c9a66'
 
     def __init__(self, size, name,
-                 description, id, snapshot,
+                 description, volume_id, snapshot,
                  volume_type, metadata,
                  availability_zone):
         snapshot_id = None
         if snapshot is not None:
             snapshot_id = snapshot['id']
-        if id is None:
-            id = str(utils.gen_uuid())
+        if volume_id is None:
+            volume_id = str(uuid.uuid4())
         self.vol = {
             'created_at': timeutils.utcnow(),
             'deleted_at': None,
             'updated_at': timeutils.utcnow(),
             'uuid': 'WTF',
             'deleted': False,
-            'id': id,
+            'id': volume_id,
             'user_id': self.user_uuid,
             'project_id': 'fake-project-id',
             'snapshot_id': snapshot_id,
@@ -79,7 +88,7 @@ class fake_snapshot():
 
     def __init__(self, volume_id, size, name, desc, id=None):
         if id is None:
-            id = str(utils.gen_uuid())
+            id = str(uuid.uuid4())
         self.snap = {
             'created_at': timeutils.utcnow(),
             'deleted_at': None,
@@ -133,10 +142,11 @@ class API(object):
         return v.vol
 
     def create_with_kwargs(self, context, **kwargs):
+        volume_id = kwargs.get('volume_id', None)
         v = fake_volume(kwargs['size'],
                         kwargs['name'],
                         kwargs['description'],
-                        str(kwargs.get('volume_id', None)),
+                        str(volume_id),
                         None,
                         None,
                         None,
@@ -157,35 +167,44 @@ class API(object):
         if volume_id == 87654321:
             return {'id': volume_id,
                     'attach_time': '13:56:24',
+                    'attach_status': 'attached',
                     'status': 'in-use'}
 
         for v in self.volume_list:
             if v['id'] == str(volume_id):
                 return v
 
+        raise exception.VolumeNotFound(volume_id=volume_id)
+
     def get_all(self, context):
         return self.volume_list
 
-    def delete(self, context, volume):
-        LOG.info('deleting volume %s', volume['id'])
-        self.volume_list = [v for v in self.volume_list if v != volume]
+    def delete(self, context, volume_id):
+        LOG.info('deleting volume %s', volume_id)
+        self.volume_list = [v for v in self.volume_list
+                            if v['id'] != volume_id]
 
-    def check_attach(self, context, volume):
+    def check_attach(self, context, volume, instance=None):
         if volume['status'] != 'available':
             msg = _("status must be available")
+            msg = "%s" % volume
             raise exception.InvalidVolume(reason=msg)
         if volume['attach_status'] == 'attached':
             msg = _("already attached")
             raise exception.InvalidVolume(reason=msg)
+        if instance and not CONF.cinder_cross_az_attach:
+            if instance['availability_zone'] != volume['availability_zone']:
+                msg = _("Instance and volume not in same availability_zone")
+                raise exception.InvalidVolume(reason=msg)
 
     def check_detach(self, context, volume):
         if volume['status'] == "available":
             msg = _("already detached")
             raise exception.InvalidVolume(reason=msg)
 
-    def attach(self, context, volume, instance_uuid, mountpoint):
-        LOG.info('attaching volume %s', volume['id'])
-        volume = self.get(context, volume['id'])
+    def attach(self, context, volume_id, instance_uuid, mountpoint):
+        LOG.info('attaching volume %s', volume_id)
+        volume = self.get(context, volume_id)
         volume['status'] = 'in-use'
         volume['mountpoint'] = mountpoint
         volume['attach_status'] = 'attached'
@@ -199,9 +218,9 @@ class API(object):
         del self.volume_list[:]
         del self.snapshot_list[:]
 
-    def detach(self, context, volume):
-        LOG.info('detaching volume %s', volume['id'])
-        volume = self.get(context, volume['id'])
+    def detach(self, context, volume_id):
+        LOG.info('detaching volume %s', volume_id)
+        volume = self.get(context, volume_id)
         volume['status'] = 'available'
         volume['mountpoint'] = None
         volume['attach_status'] = 'detached'
@@ -221,7 +240,8 @@ class API(object):
     def get_all_snapshots(self, context):
         return self.snapshot_list
 
-    def create_snapshot(self, context, volume, name, description, id=None):
+    def create_snapshot(self, context, volume_id, name, description, id=None):
+        volume = self.get(context, volume_id)
         snapshot = fake_snapshot(volume['id'], volume['size'],
                                  name, description, id)
         self.snapshot_list.append(snapshot.snap)
@@ -239,22 +259,34 @@ class API(object):
         self.snapshot_list.append(snapshot.snap)
         return snapshot.snap
 
-    def create_snapshot_force(self, context, volume,
+    def create_snapshot_force(self, context, volume_id,
                               name, description, id=None):
+        volume = self.get(context, volume_id)
         snapshot = fake_snapshot(volume['id'], volume['size'],
                                  name, description, id)
         self.snapshot_list.append(snapshot.snap)
         return snapshot.snap
 
-    def delete_snapshot(self, context, snapshot):
-        self.snapshot_list = [s for s in self.snapshot_list if s != snapshot]
+    def delete_snapshot(self, context, snapshot_id):
+        self.snapshot_list = [s for s in self.snapshot_list
+                              if s['id'] != snapshot_id]
 
-    def reserve_volume(self, context, volume):
-        LOG.info('reserving volume %s', volume['id'])
-        volume = self.get(context, volume['id'])
+    def reserve_volume(self, context, volume_id):
+        LOG.info('reserving volume %s', volume_id)
+        volume = self.get(context, volume_id)
         volume['status'] = 'attaching'
 
-    def unreserve_volume(self, context, volume):
-        LOG.info('unreserving volume %s', volume['id'])
-        volume = self.get(context, volume['id'])
+    def unreserve_volume(self, context, volume_id):
+        LOG.info('unreserving volume %s', volume_id)
+        volume = self.get(context, volume_id)
         volume['status'] = 'available'
+
+    def begin_detaching(self, context, volume_id):
+        LOG.info('beging detaching volume %s', volume_id)
+        volume = self.get(context, volume_id)
+        volume['status'] = 'detaching'
+
+    def roll_detaching(self, context, volume_id):
+        LOG.info('roll detaching volume %s', volume_id)
+        volume = self.get(context, volume_id)
+        volume['status'] = 'in-use'

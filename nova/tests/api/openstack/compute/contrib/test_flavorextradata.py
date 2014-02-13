@@ -1,4 +1,4 @@
-# Copyright 2012 OpenStack LLC.
+# Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -17,13 +17,13 @@ import datetime
 
 import webob
 
-from nova.compute import instance_types
+from nova.compute import flavors
 from nova.openstack.common import jsonutils
 from nova import test
 from nova.tests.api.openstack import fakes
 
 
-def fake_get_instance_type_by_flavor_id(flavorid):
+def fake_get_flavor_by_flavor_id(flavorid, ctxt=None):
     return {
         'id': flavorid,
         'flavorid': str(flavorid),
@@ -35,31 +35,35 @@ def fake_get_instance_type_by_flavor_id(flavorid):
         'updated_at': None,
         'memory_mb': 512,
         'vcpus': 1,
-        'swap': 512,
-        'rxtx_factor': 1.0,
         'extra_specs': {},
         'deleted_at': None,
-        'vcpu_weight': None
+        'vcpu_weight': None,
     }
 
 
-def fake_get_all_types(inactive=0, filters=None):
-    return {
-        'fake1': fake_get_instance_type_by_flavor_id(1),
-        'fake2': fake_get_instance_type_by_flavor_id(2)
-    }
+def fake_get_all_flavors_sorted_list(context=None, inactive=False,
+                                     filters=None, sort_key='flavorid',
+                                     sort_dir='asc', limit=None, marker=None):
+    return [
+        fake_get_flavor_by_flavor_id(1),
+        fake_get_flavor_by_flavor_id(2)
+    ]
 
 
-class FlavorextradataTest(test.TestCase):
+class FlavorextradataTest(test.NoDBTestCase):
     def setUp(self):
         super(FlavorextradataTest, self).setUp()
-        self.stubs.Set(instance_types, 'get_instance_type_by_flavor_id',
-                                        fake_get_instance_type_by_flavor_id)
-        self.stubs.Set(instance_types, 'get_all_types', fake_get_all_types)
+        ext = ('nova.api.openstack.compute.contrib'
+              '.flavorextradata.Flavorextradata')
+        self.flags(osapi_compute_extension=[ext])
+        self.stubs.Set(flavors, 'get_flavor_by_flavor_id',
+                                        fake_get_flavor_by_flavor_id)
+        self.stubs.Set(flavors, 'get_all_flavors_sorted_list',
+                       fake_get_all_flavors_sorted_list)
 
-    def _verify_server_response(self, flavor, expected):
+    def _verify_flavor_response(self, flavor, expected):
         for key in expected:
-            self.assertEquals(flavor[key], expected[key])
+            self.assertEqual(flavor[key], expected[key])
 
     def test_show(self):
         expected = {
@@ -70,17 +74,15 @@ class FlavorextradataTest(test.TestCase):
                 'vcpus': 1,
                 'disk': 1,
                 'OS-FLV-EXT-DATA:ephemeral': 1,
-                'swap': 512,
-                'rxtx_factor': 1,
             }
         }
 
         url = '/v2/fake/flavors/1'
         req = webob.Request.blank(url)
         req.headers['Content-Type'] = 'application/json'
-        res = req.get_response(fakes.wsgi_app())
+        res = req.get_response(fakes.wsgi_app(init_only=('flavors',)))
         body = jsonutils.loads(res.body)
-        self._verify_server_response(body['flavor'], expected['flavor'])
+        self._verify_flavor_response(body['flavor'], expected['flavor'])
 
     def test_detail(self):
         expected = [
@@ -91,8 +93,6 @@ class FlavorextradataTest(test.TestCase):
                 'vcpus': 1,
                 'disk': 1,
                 'OS-FLV-EXT-DATA:ephemeral': 1,
-                'swap': 512,
-                'rxtx_factor': 1,
             },
             {
                 'id': '2',
@@ -101,15 +101,13 @@ class FlavorextradataTest(test.TestCase):
                 'vcpus': 1,
                 'disk': 1,
                 'OS-FLV-EXT-DATA:ephemeral': 1,
-                'swap': 512,
-                'rxtx_factor': 1,
             },
         ]
 
         url = '/v2/fake/flavors/detail'
         req = webob.Request.blank(url)
         req.headers['Content-Type'] = 'application/json'
-        res = req.get_response(fakes.wsgi_app())
+        res = req.get_response(fakes.wsgi_app(init_only=('flavors',)))
         body = jsonutils.loads(res.body)
         for i, flavor in enumerate(body['flavors']):
-            self._verify_server_response(flavor, expected[i])
+            self._verify_flavor_response(flavor, expected[i])

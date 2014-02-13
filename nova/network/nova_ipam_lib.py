@@ -16,20 +16,16 @@
 #    under the License.
 
 from nova import db
-from nova import exception
 from nova import ipv6
-from nova.openstack.common import log as logging
-
-
-LOG = logging.getLogger(__name__)
+from nova.objects import virtual_interface as vif_obj
 
 
 def get_ipam_lib(net_man):
-    return QuantumNovaIPAMLib(net_man)
+    return NeutronNovaIPAMLib(net_man)
 
 
-class QuantumNovaIPAMLib(object):
-    """Implements Quantum IP Address Management (IPAM) interface
+class NeutronNovaIPAMLib(object):
+    """Implements Neutron IP Address Management (IPAM) interface
        using the local Nova database.  This implementation is inline
        with how IPAM is used by other NetworkManagers.
     """
@@ -43,7 +39,7 @@ class QuantumNovaIPAMLib(object):
 
     def get_subnets_by_net_id(self, context, tenant_id, net_id, _vif_id=None):
         """Returns information about the IPv4 and IPv6 subnets
-           associated with a Quantum Network UUID.
+           associated with a Neutron Network UUID.
         """
         n = db.network_get_by_uuid(context.elevated(), net_id)
         subnet_v4 = {
@@ -70,7 +66,7 @@ class QuantumNovaIPAMLib(object):
         return [subnet_v4, subnet_v6]
 
     def get_routes_by_ip_block(self, context, block_id, project_id):
-        """Returns the list of routes for the IP block"""
+        """Returns the list of routes for the IP block."""
         return []
 
     def get_v4_ips_by_interface(self, context, net_id, vif_id, project_id):
@@ -78,9 +74,11 @@ class QuantumNovaIPAMLib(object):
            the specified virtual interface, based on the fixed_ips table.
         """
         # TODO(tr3buchet): link fixed_ips to vif by uuid so only 1 db call
-        vif_rec = db.virtual_interface_get_by_uuid(context, vif_id)
+        vif_rec = vif_obj.VirtualInterface.get_by_uuid(context, vif_id)
+        if not vif_rec:
+            return []
         fixed_ips = db.fixed_ips_by_virtual_interface(context,
-                                                      vif_rec['id'])
+                                                      vif_rec.id)
         return [fixed_ip['address'] for fixed_ip in fixed_ips]
 
     def get_v6_ips_by_interface(self, context, net_id, vif_id, project_id):
@@ -89,10 +87,10 @@ class QuantumNovaIPAMLib(object):
         """
         admin_context = context.elevated()
         network = db.network_get_by_uuid(admin_context, net_id)
-        vif_rec = db.virtual_interface_get_by_uuid(context, vif_id)
-        if network['cidr_v6']:
+        vif_rec = vif_obj.VirtualInterface.get_by_uuid(context, vif_id)
+        if network['cidr_v6'] and vif_rec and vif_rec.address:
             ip = ipv6.to_global(network['cidr_v6'],
-                                vif_rec['address'],
+                                vif_rec.address,
                                 project_id)
             return [ip]
         return []

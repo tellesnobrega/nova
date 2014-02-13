@@ -1,4 +1,4 @@
-# Copyright (c) 2012 OpenStack, LLC
+# Copyright (c) 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -19,6 +19,7 @@ from webob import exc
 from nova.api.openstack.compute.contrib import hypervisors
 from nova import context
 from nova import db
+from nova.db.sqlalchemy import api as db_api
 from nova import exception
 from nova import test
 from nova.tests.api.openstack import fakes
@@ -79,6 +80,7 @@ TEST_SERVERS = [dict(name="inst1", uuid="uuid1", host="compute1"),
                 dict(name="inst4", uuid="uuid4", host="compute2")]
 
 
+@db_api.require_admin_context
 def fake_compute_node_get_all(context):
     return TEST_HYPERS
 
@@ -91,7 +93,7 @@ def fake_compute_node_get(context, compute_id):
     for hyper in TEST_HYPERS:
         if hyper['id'] == compute_id:
             return hyper
-    raise exception.ComputeHostNotFound
+    raise exception.ComputeHostNotFound(host=compute_id)
 
 
 def fake_compute_node_statistics(context):
@@ -128,7 +130,7 @@ def fake_instance_get_all_by_host(context, host):
     return results
 
 
-class HypervisorsTest(test.TestCase):
+class HypervisorsTest(test.NoDBTestCase):
     def setUp(self):
         super(HypervisorsTest, self).setUp()
         self.context = context.get_admin_context()
@@ -185,7 +187,8 @@ class HypervisorsTest(test.TestCase):
                     dict(name="inst4", uuid="uuid4")]))
 
     def test_index(self):
-        req = fakes.HTTPRequest.blank('/v2/fake/os-hypervisors')
+        req = fakes.HTTPRequest.blank('/v2/fake/os-hypervisors',
+                                      use_admin_context=True)
         result = self.controller.index(req)
 
         self.assertEqual(result, dict(hypervisors=[
@@ -193,7 +196,8 @@ class HypervisorsTest(test.TestCase):
                     dict(id=2, hypervisor_hostname="hyper2")]))
 
     def test_detail(self):
-        req = fakes.HTTPRequest.blank('/v2/fake/os-hypervisors/detail')
+        req = fakes.HTTPRequest.blank('/v2/fake/os-hypervisors/detail',
+                                      use_admin_context=True)
         result = self.controller.detail(req)
 
         self.assertEqual(result, dict(hypervisors=[
@@ -267,7 +271,7 @@ class HypervisorsTest(test.TestCase):
         def fake_get_host_uptime(context, hyp):
             raise exc.HTTPNotImplemented()
 
-        self.stubs.Set(self.controller.api, 'get_host_uptime',
+        self.stubs.Set(self.controller.host_api, 'get_host_uptime',
                        fake_get_host_uptime)
 
         req = fakes.HTTPRequest.blank('/v2/fake/os-hypervisors/1')
@@ -278,7 +282,7 @@ class HypervisorsTest(test.TestCase):
         def fake_get_host_uptime(context, hyp):
             return "fake uptime"
 
-        self.stubs.Set(self.controller.api, 'get_host_uptime',
+        self.stubs.Set(self.controller.host_api, 'get_host_uptime',
                        fake_get_host_uptime)
 
         req = fakes.HTTPRequest.blank('/v2/fake/os-hypervisors/1')
@@ -332,7 +336,7 @@ class HypervisorsTest(test.TestCase):
                     disk_available_least=200)))
 
 
-class HypervisorsSerializersTest(test.TestCase):
+class HypervisorsSerializersTest(test.NoDBTestCase):
     def compare_to_exemplar(self, exemplar, hyper):
         # Check attributes
         for key, value in exemplar.items():
@@ -347,7 +351,7 @@ class HypervisorsSerializersTest(test.TestCase):
         required_children = set([child for child in ('service', 'servers')
                                  if child in exemplar])
         for child in hyper:
-            self.assertTrue(child.tag in required_children)
+            self.assertIn(child.tag, required_children)
             required_children.remove(child.tag)
 
             # Check the node...

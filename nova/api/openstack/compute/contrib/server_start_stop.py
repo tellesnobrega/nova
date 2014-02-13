@@ -12,7 +12,7 @@
 #    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
-#    under the License
+#    under the License.
 
 import webob
 
@@ -20,6 +20,8 @@ from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova import compute
 from nova import exception
+from nova.objects import instance as instance_obj
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 
 
@@ -33,18 +35,23 @@ class ServerStartStopActionController(wsgi.Controller):
 
     def _get_instance(self, context, instance_uuid):
         try:
-            return self.compute_api.get(context, instance_uuid)
+            attrs = ['system_metadata', 'metadata']
+            return instance_obj.Instance.get_by_uuid(context, instance_uuid,
+                                                     expected_attrs=attrs)
         except exception.NotFound:
             msg = _("Instance not found")
             raise webob.exc.HTTPNotFound(explanation=msg)
 
     @wsgi.action('os-start')
     def _start_server(self, req, id, body):
-        """Start an instance. """
+        """Start an instance."""
         context = req.environ['nova.context']
         instance = self._get_instance(context, id)
         LOG.debug(_('start instance'), instance=instance)
-        self.compute_api.start(context, instance)
+        try:
+            self.compute_api.start(context, instance)
+        except (exception.InstanceNotReady, exception.InstanceIsLocked) as e:
+            raise webob.exc.HTTPConflict(explanation=e.format_message())
         return webob.Response(status_int=202)
 
     @wsgi.action('os-stop')
@@ -53,12 +60,15 @@ class ServerStartStopActionController(wsgi.Controller):
         context = req.environ['nova.context']
         instance = self._get_instance(context, id)
         LOG.debug(_('stop instance'), instance=instance)
-        self.compute_api.stop(context, instance)
+        try:
+            self.compute_api.stop(context, instance)
+        except (exception.InstanceNotReady, exception.InstanceIsLocked) as e:
+            raise webob.exc.HTTPConflict(explanation=e.format_message())
         return webob.Response(status_int=202)
 
 
 class Server_start_stop(extensions.ExtensionDescriptor):
-    """Start/Stop instance compute API support"""
+    """Start/Stop instance compute API support."""
 
     name = "ServerStartStop"
     alias = "os-server-start-stop"

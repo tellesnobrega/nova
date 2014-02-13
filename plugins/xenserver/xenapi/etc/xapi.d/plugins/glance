@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright (c) 2012 Openstack, LLC
+# Copyright (c) 2012 OpenStack Foundation
 # Copyright (c) 2010 Citrix Systems, Inc.
 # Copyright 2010 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration.
@@ -20,24 +20,21 @@
 
 """Handle the uploading and downloading of images via Glance."""
 
-import cPickle as pickle
 import httplib
-try:
-    import json
-except ImportError:
-    import simplejson as json
 import md5
-import os
-import shutil
-
+import socket
 import urllib2
-import XenAPIPlugin
 
 import utils
 
-#FIXME(sirp): should this use pluginlib from 5.6?
-from pluginlib_nova import *
-configure_logging('glance')
+import pluginlib_nova
+
+
+pluginlib_nova.configure_logging('glance')
+logging = pluginlib_nova.logging
+PluginError = pluginlib_nova.PluginError
+
+DEFAULT_SOCKET_TIMEOUT_SECONDS = 60
 
 
 class RetryableError(Exception):
@@ -45,6 +42,11 @@ class RetryableError(Exception):
 
 
 def _download_tarball_and_verify(request, staging_path):
+    # NOTE(johngarbutt) to ensure the script does not hang
+    # if we lose connection to glance we add a default socket
+    # The default is to never timeout.
+    socket.setdefaulttimeout(DEFAULT_SOCKET_TIMEOUT_SECONDS)
+
     try:
         response = urllib2.urlopen(request)
     except urllib2.HTTPError, error:
@@ -95,20 +97,20 @@ def _download_tarball_and_verify(request, staging_path):
 
 
 def _download_tarball(sr_path, staging_path, image_id, glance_host,
-                      glance_port, auth_token):
+                      glance_port, glance_use_ssl, extra_headers):
     """Download the tarball image from Glance and extract it into the staging
     area. Retry if there is any failure.
     """
-    # Build request headers
-    headers = {}
-    if auth_token:
-        headers['x-auth-token'] = auth_token
+    if glance_use_ssl:
+        scheme = 'https'
+    else:
+        scheme = 'http'
 
-    url = ("http://%(glance_host)s:%(glance_port)d/v1/images/"
+    url = ("%(scheme)s://%(glance_host)s:%(glance_port)d/v1/images/"
            "%(image_id)s" % locals())
     logging.info("Downloading %s" % url)
 
-    request = urllib2.Request(url, headers=headers)
+    request = urllib2.Request(url, headers=extra_headers)
     try:
         _download_tarball_and_verify(request, staging_path)
     except Exception:
@@ -117,129 +119,149 @@ def _download_tarball(sr_path, staging_path, image_id, glance_host,
 
 
 def _upload_tarball(staging_path, image_id, glance_host, glance_port,
-                    auth_token, properties):
+                    glance_use_ssl, extra_headers, properties):
     """
     Create a tarball of the image and then stream that into Glance
     using chunked-transfer-encoded HTTP.
     """
-    url = 'http://%s:%s/v1/images/%s' % (glance_host, glance_port, image_id)
+    if glance_use_ssl:
+        scheme = 'https'
+    else:
+        scheme = 'http'
+
+    url = '%s://%s:%s/v1/images/%s' % (scheme, glance_host, glance_port,
+                                       image_id)
     logging.info("Writing image data to %s" % url)
-    conn = httplib.HTTPConnection(glance_host, glance_port)
 
-    # NOTE(sirp): httplib under python2.4 won't accept a file-like object
-    # to request
-    conn.putrequest('PUT', '/v1/images/%s' % image_id)
+    try:
+        if glance_use_ssl:
+            conn = httplib.HTTPSConnection(glance_host, glance_port)
+        else:
+            conn = httplib.HTTPConnection(glance_host, glance_port)
+    except Exception, error:
+        raise RetryableError(error)
 
-    # NOTE(sirp): There is some confusion around OVF. Here's a summary of
-    # where we currently stand:
-    #   1. OVF as a container format is misnamed. We really should be using
-    #      OVA since that is the name for the container format; OVF is the
-    #      standard applied to the manifest file contained within.
-    #   2. We're currently uploading a vanilla tarball. In order to be OVF/OVA
-    #      compliant, we'll need to embed a minimal OVF manifest as the first
-    #      file.
+    try:
+        try:
+            # NOTE(sirp): httplib under python2.4 won't accept
+            # a file-like object to request
+            conn.putrequest('PUT', '/v1/images/%s' % image_id)
+        except Exception, error:
+            raise RetryableError(error)
 
-    # NOTE(dprince): In order to preserve existing Glance properties
-    # we set X-Glance-Registry-Purge-Props on this request.
-    headers = {
-        'content-type': 'application/octet-stream',
-        'transfer-encoding': 'chunked',
-        'x-image-meta-is-public': 'False',
-        'x-image-meta-status': 'queued',
-        'x-image-meta-disk-format': 'vhd',
-        'x-image-meta-container-format': 'ovf',
-        'x-glance-registry-purge-props': 'False'}
+        # NOTE(sirp): There is some confusion around OVF. Here's a summary of
+        # where we currently stand:
+        #   1. OVF as a container format is misnamed. We really should be using
+        #      OVA since that is the name for the container format; OVF is the
+        #      standard applied to the manifest file contained within.
+        #   2. We're currently uploading a vanilla tarball. In order to be
+        #      OVF/OVA compliant, we'll need to embed a minimal OVF manifest
+        #      as the first file.
 
-    # If we have an auth_token, set an x-auth-token header
-    if auth_token:
-        headers['x-auth-token'] = auth_token
+        # NOTE(dprince): In order to preserve existing Glance properties
+        # we set X-Glance-Registry-Purge-Props on this request.
+        headers = {
+            'content-type': 'application/octet-stream',
+            'transfer-encoding': 'chunked',
+            'x-image-meta-is-public': 'False',
+            'x-image-meta-status': 'queued',
+            'x-image-meta-disk-format': 'vhd',
+            'x-image-meta-container-format': 'ovf',
+            'x-glance-registry-purge-props': 'False'}
 
-    for key, value in properties.iteritems():
-        header_key = "x-image-meta-property-%s" % key.replace('_', '-')
-        headers[header_key] = str(value)
+        headers.update(**extra_headers)
 
-    for header, value in headers.iteritems():
-        conn.putheader(header, value)
-    conn.endheaders()
+        for key, value in properties.iteritems():
+            header_key = "x-image-meta-property-%s" % key.replace('_', '-')
+            headers[header_key] = str(value)
 
-    callback_data = {'bytes_written': 0}
+        for header, value in headers.iteritems():
+            conn.putheader(header, value)
+        conn.endheaders()
 
-    def send_chunked_transfer_encoded(chunk):
-        chunk_len = len(chunk)
-        callback_data['bytes_written'] += chunk_len
-        conn.send("%x\r\n%s\r\n" % (chunk_len, chunk))
+        callback_data = {'bytes_written': 0}
 
-    utils.create_tarball(
-            None, staging_path, callback=send_chunked_transfer_encoded)
+        def send_chunked_transfer_encoded(chunk):
+            chunk_len = len(chunk)
+            callback_data['bytes_written'] += chunk_len
+            try:
+                conn.send("%x\r\n%s\r\n" % (chunk_len, chunk))
+            except Exception, error:
+                raise RetryableError(error)
 
-    conn.send("0\r\n\r\n")  # Chunked-Transfer terminator
+        compression_level = properties.get('xenapi_image_compression_level')
 
-    bytes_written = callback_data['bytes_written']
-    logging.info("Wrote %d bytes to %s" % (bytes_written, url))
+        utils.create_tarball(
+                None, staging_path, callback=send_chunked_transfer_encoded,
+                compression_level=compression_level)
 
-    resp = conn.getresponse()
-    if resp.status != httplib.OK:
+        try:
+            conn.send("0\r\n\r\n")  # Chunked-Transfer terminator
+        except Exception, error:
+            raise RetryableError(error)
+
+        bytes_written = callback_data['bytes_written']
+        logging.info("Wrote %d bytes to %s" % (bytes_written, url))
+
+        resp = conn.getresponse()
+        if resp.status == httplib.OK:
+            return
+
         logging.error("Unexpected response while writing image data to %s: "
                       "Response Status: %i, Response body: %s"
                       % (url, resp.status, resp.read()))
-        raise Exception("Unexpected response [%i] while uploading image [%s] "
-                        "to glance host [%s:%s]"
-                        % (resp.status, image_id, glance_host, glance_port))
-    conn.close()
+
+        if resp.status in (httplib.UNAUTHORIZED,
+                           httplib.REQUEST_ENTITY_TOO_LARGE,
+                           httplib.PRECONDITION_FAILED,
+                           httplib.CONFLICT,
+                           httplib.FORBIDDEN):
+            # No point in retrying for these conditions
+            raise PluginError("Got Error response [%i] while uploading "
+                              "image [%s] "
+                              "to glance host [%s:%s]"
+                              % (resp.status, image_id,
+                                 glance_host, glance_port))
+        else:
+            raise RetryableError("Unexpected response [%i] while uploading "
+                                 "image [%s] "
+                                 "to glance host [%s:%s]"
+                                 % (resp.status, image_id,
+                                    glance_host, glance_port))
+    finally:
+        conn.close()
 
 
-def download_vhd(session, args):
+def download_vhd(session, image_id, glance_host, glance_port, glance_use_ssl,
+                 uuid_stack, sr_path, extra_headers):
     """Download an image from Glance, unbundle it, and then deposit the VHDs
     into the storage repository
     """
-    params = pickle.loads(exists(args, 'params'))
-    image_id = params["image_id"]
-    glance_host = params["glance_host"]
-    glance_port = params["glance_port"]
-    uuid_stack = params["uuid_stack"]
-    sr_path = params["sr_path"]
-    auth_token = params["auth_token"]
-
     staging_path = utils.make_staging_area(sr_path)
     try:
         # Download tarball into staging area and extract it
         _download_tarball(
             sr_path, staging_path, image_id, glance_host, glance_port,
-            auth_token)
+            glance_use_ssl, extra_headers)
 
         # Move the VHDs from the staging area into the storage repository
-        imported_vhds = utils.import_vhds(sr_path, staging_path, uuid_stack)
+        return utils.import_vhds(sr_path, staging_path, uuid_stack)
     finally:
         utils.cleanup_staging_area(staging_path)
 
-    # Right now, it's easier to return a single string via XenAPI,
-    # so we'll json encode the list of VHDs.
-    return json.dumps(imported_vhds)
 
-
-def upload_vhd(session, args):
+def upload_vhd(session, vdi_uuids, image_id, glance_host, glance_port,
+               glance_use_ssl, sr_path, extra_headers, properties):
     """Bundle the VHDs comprising an image and then stream them into Glance.
     """
-    params = pickle.loads(exists(args, 'params'))
-    vdi_uuids = params["vdi_uuids"]
-    image_id = params["image_id"]
-    glance_host = params["glance_host"]
-    glance_port = params["glance_port"]
-    sr_path = params["sr_path"]
-    auth_token = params["auth_token"]
-    properties = params["properties"]
-
     staging_path = utils.make_staging_area(sr_path)
     try:
         utils.prepare_staging_area(sr_path, staging_path, vdi_uuids)
         _upload_tarball(staging_path, image_id, glance_host, glance_port,
-                        auth_token, properties)
+                        glance_use_ssl, extra_headers, properties)
     finally:
         utils.cleanup_staging_area(staging_path)
 
-    return ""  # Nothing useful to return on an upload
-
 
 if __name__ == '__main__':
-    XenAPIPlugin.dispatch({'upload_vhd': upload_vhd,
-                           'download_vhd': download_vhd})
+    utils.register_plugin_calls(download_vhd, upload_vhd)

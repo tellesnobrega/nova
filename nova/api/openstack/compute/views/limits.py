@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2010-2011 OpenStack LLC.
+# Copyright 2010-2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -47,13 +47,13 @@ class ViewBuilder(object):
             "ram": ["maxTotalRAMSize"],
             "instances": ["maxTotalInstances"],
             "cores": ["maxTotalCores"],
-            "gigabytes": ["maxTotalVolumeGigabytes"],
-            "volumes": ["maxTotalVolumes"],
             "key_pairs": ["maxTotalKeypairs"],
             "floating_ips": ["maxTotalFloatingIps"],
             "metadata_items": ["maxServerMeta", "maxImageMeta"],
             "injected_files": ["maxPersonality"],
             "injected_file_content_bytes": ["maxPersonalitySize"],
+            "security_groups": ["maxSecurityGroups"],
+            "security_group_rules": ["maxSecurityGroupRules"],
         }
         limits = {}
         for name, value in absolute_limits.iteritems():
@@ -71,7 +71,7 @@ class ViewBuilder(object):
             # check for existing key
             for limit in limits:
                 if (limit["uri"] == rate_limit["URI"] and
-                    limit["regex"] == rate_limit["regex"]):
+                        limit["regex"] == rate_limit["regex"]):
                     _rate_limit_key = limit
                     break
 
@@ -98,3 +98,10 @@ class ViewBuilder(object):
             "unit": rate_limit["unit"],
             "next-available": timeutils.isotime(at=next_avail),
         }
+
+
+class ViewBuilderV3(ViewBuilder):
+
+    def build(self, rate_limits):
+        rate_limits = self._build_rate_limits(rate_limits)
+        return {"limits": {"rate": rate_limits}}

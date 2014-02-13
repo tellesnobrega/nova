@@ -53,176 +53,59 @@ This module provides Manager, a base class for managers.
 
 """
 
+from oslo.config import cfg
+
 from nova.db import base
-from nova import flags
 from nova.openstack.common import log as logging
-from nova.openstack.common.plugin import pluginmanager
-from nova.openstack.common.rpc import dispatcher as rpc_dispatcher
-from nova.scheduler import rpcapi as scheduler_rpcapi
-from nova import version
+from nova.openstack.common import periodic_task
+from nova import rpc
 
 
-FLAGS = flags.FLAGS
-
-
+CONF = cfg.CONF
+CONF.import_opt('host', 'nova.netconf')
 LOG = logging.getLogger(__name__)
 
 
-def periodic_task(*args, **kwargs):
-    """Decorator to indicate that a method is a periodic task.
+class Manager(base.Base, periodic_task.PeriodicTasks):
 
-    This decorator can be used in two ways:
-
-        1. Without arguments '@periodic_task', this will be run on every tick
-           of the periodic scheduler.
-
-        2. With arguments, @periodic_task(ticks_between_runs=N), this will be
-           run on every N ticks of the periodic scheduler.
-    """
-    def decorator(f):
-        f._periodic_task = True
-        f._ticks_between_runs = kwargs.pop('ticks_between_runs', 0)
-        return f
-
-    # NOTE(sirp): The `if` is necessary to allow the decorator to be used with
-    # and without parens.
-    #
-    # In the 'with-parens' case (with kwargs present), this function needs to
-    # return a decorator function since the interpreter will invoke it like:
-    #
-    #   periodic_task(*args, **kwargs)(f)
-    #
-    # In the 'without-parens' case, the original function will be passed
-    # in as the first argument, like:
-    #
-    #   periodic_task(f)
-    if kwargs:
-        return decorator
-    else:
-        return decorator(args[0])
-
-
-class ManagerMeta(type):
-    def __init__(cls, names, bases, dict_):
-        """Metaclass that allows us to collect decorated periodic tasks."""
-        super(ManagerMeta, cls).__init__(names, bases, dict_)
-
-        # NOTE(sirp): if the attribute is not present then we must be the base
-        # class, so, go ahead an initialize it. If the attribute is present,
-        # then we're a subclass so make a copy of it so we don't step on our
-        # parent's toes.
-        try:
-            cls._periodic_tasks = cls._periodic_tasks[:]
-        except AttributeError:
-            cls._periodic_tasks = []
-
-        try:
-            cls._ticks_to_skip = cls._ticks_to_skip.copy()
-        except AttributeError:
-            cls._ticks_to_skip = {}
-
-        for value in cls.__dict__.values():
-            if getattr(value, '_periodic_task', False):
-                task = value
-                name = task.__name__
-                cls._periodic_tasks.append((name, task))
-                cls._ticks_to_skip[name] = task._ticks_between_runs
-
-
-class Manager(base.Base):
-    __metaclass__ = ManagerMeta
-
-    # Set RPC API version to 1.0 by default.
-    RPC_API_VERSION = '1.0'
-
-    def __init__(self, host=None, db_driver=None):
+    def __init__(self, host=None, db_driver=None, service_name='undefined'):
         if not host:
-            host = FLAGS.host
+            host = CONF.host
         self.host = host
-        self.load_plugins()
+        self.backdoor_port = None
+        self.service_name = service_name
+        self.notifier = rpc.get_notifier(self.service_name, self.host)
+        self.additional_endpoints = []
         super(Manager, self).__init__(db_driver)
-
-    def load_plugins(self):
-        pluginmgr = pluginmanager.PluginManager('nova', self.__class__)
-        pluginmgr.load_plugins()
-
-    def create_rpc_dispatcher(self):
-        '''Get the rpc dispatcher for this manager.
-
-        If a manager would like to set an rpc API version, or support more than
-        one class as the target of rpc messages, override this method.
-        '''
-        return rpc_dispatcher.RpcDispatcher([self])
 
     def periodic_tasks(self, context, raise_on_error=False):
         """Tasks to be run at a periodic interval."""
-        for task_name, task in self._periodic_tasks:
-            full_task_name = '.'.join([self.__class__.__name__, task_name])
-
-            ticks_to_skip = self._ticks_to_skip[task_name]
-            if ticks_to_skip > 0:
-                LOG.debug(_("Skipping %(full_task_name)s, %(ticks_to_skip)s"
-                            " ticks left until next run"), locals())
-                self._ticks_to_skip[task_name] -= 1
-                continue
-
-            self._ticks_to_skip[task_name] = task._ticks_between_runs
-            LOG.debug(_("Running periodic task %(full_task_name)s"), locals())
-
-            try:
-                task(self, context)
-            except Exception as e:
-                if raise_on_error:
-                    raise
-                LOG.exception(_("Error during %(full_task_name)s: %(e)s"),
-                              locals())
+        return self.run_periodic_tasks(context, raise_on_error=raise_on_error)
 
     def init_host(self):
-        """Handle initialization if this is a standalone service.
+        """Hook to do additional manager initialization when one requests
+        the service be started.  This is called before any service record
+        is created.
 
         Child classes should override this method.
-
         """
         pass
 
-    def service_version(self, context):
-        return version.version_string()
+    def pre_start_hook(self):
+        """Hook to provide the manager the ability to do additional
+        start-up work before any RPC queues/consumers are created. This is
+        called after other initialization has succeeded and a service
+        record is created.
 
-    def service_config(self, context):
-        config = {}
-        for key in FLAGS:
-            config[key] = FLAGS.get(key, None)
-        return config
+        Child classes should override this method.
+        """
+        pass
 
+    def post_start_hook(self):
+        """Hook to provide the manager the ability to do additional
+        start-up work immediately after a service creates RPC consumers
+        and starts 'running'.
 
-class SchedulerDependentManager(Manager):
-    """Periodically send capability updates to the Scheduler services.
-
-    Services that need to update the Scheduler of their capabilities
-    should derive from this class. Otherwise they can derive from
-    manager.Manager directly. Updates are only sent after
-    update_service_capabilities is called with non-None values.
-
-    """
-
-    def __init__(self, host=None, db_driver=None, service_name='undefined'):
-        self.last_capabilities = None
-        self.service_name = service_name
-        self.scheduler_rpcapi = scheduler_rpcapi.SchedulerAPI()
-        super(SchedulerDependentManager, self).__init__(host, db_driver)
-
-    def load_plugins(self):
-        pluginmgr = pluginmanager.PluginManager('nova', self.service_name)
-        pluginmgr.load_plugins()
-
-    def update_service_capabilities(self, capabilities):
-        """Remember these capabilities to send on next periodic update."""
-        self.last_capabilities = capabilities
-
-    @periodic_task
-    def _publish_service_capabilities(self, context):
-        """Pass data back to the scheduler at a periodic interval."""
-        if self.last_capabilities:
-            LOG.debug(_('Notifying Schedulers of capabilities ...'))
-            self.scheduler_rpcapi.update_service_capabilities(context,
-                    self.service_name, self.host, self.last_capabilities)
+        Child classes should override this method.
+        """
+        pass

@@ -22,7 +22,14 @@ NOW_GLANCE_FORMAT = "2010-10-11T10:30:22"
 
 class StubGlanceClient(object):
 
-    def __init__(self, images=None):
+    def __init__(self, images=None, version=None, endpoint=None, **params):
+        self.auth_token = params.get('token')
+        self.identity_headers = params.get('identity_headers')
+        if self.identity_headers:
+            if self.identity_headers.get('X-Auth-Token'):
+                self.auth_token = (self.identity_headers.get('X-Auth_Token') or
+                                   self.auth_token)
+                del self.identity_headers['X-Auth-Token']
         self._images = []
         _images = images or []
         map(lambda image: self.create(**image), _images)
@@ -33,7 +40,7 @@ class StubGlanceClient(object):
             setattr(self.images, fn, getattr(self, fn))
 
     #TODO(bcwaldon): implement filters
-    def list(self, filters=None, marker=None, limit=30):
+    def list(self, filters=None, marker=None, limit=30, page_size=20):
         if marker is None:
             index = 0
         else:
@@ -43,7 +50,6 @@ class StubGlanceClient(object):
                     break
             else:
                 raise glanceclient.exc.BadRequest('Marker not found')
-
         return self._images[index:index + limit]
 
     def get(self, image_id):
@@ -75,6 +81,11 @@ class StubGlanceClient(object):
     def update(self, image_id, **metadata):
         for i, image in enumerate(self._images):
             if image.id == str(image_id):
+                # If you try to update a non-authorized image, it raises
+                # HTTPForbidden
+                if image.owner == 'authorized_fake':
+                    raise glanceclient.exc.HTTPForbidden
+
                 for k, v in metadata.items():
                     setattr(self._images[i], k, v)
                 return self._images[i]
@@ -83,7 +94,13 @@ class StubGlanceClient(object):
     def delete(self, image_id):
         for i, image in enumerate(self._images):
             if image.id == image_id:
-                del self._images[i]
+                # When you delete an image from glance, it sets the status to
+                # DELETED. If you try to delete a DELETED image, it raises
+                # HTTPForbidden.
+                image_data = self._images[i]
+                if image_data.deleted:
+                    raise glanceclient.exc.HTTPForbidden()
+                image_data.deleted = True
                 return
         raise glanceclient.exc.NotFound(image_id)
 

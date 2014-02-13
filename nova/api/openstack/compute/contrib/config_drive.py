@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2012 OpenStack LLC.
+# Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -15,16 +15,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-"""Config Drive extension"""
+"""Config Drive extension."""
 
 from nova.api.openstack.compute import servers
 from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
-from nova import flags
 
-
-FLAGS = flags.FLAGS
 authorize = extensions.soft_extension_authorizer('compute', 'config_drive')
 
 
@@ -74,7 +71,7 @@ class Controller(servers.Controller):
 
 
 class Config_drive(extensions.ExtensionDescriptor):
-    """Config Drive Extension"""
+    """Config Drive Extension."""
 
     name = "ConfigDrive"
     alias = "os-config-drive"

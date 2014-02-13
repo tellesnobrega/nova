@@ -1,4 +1,4 @@
-# Copyright (c) 2011 OpenStack, LLC.
+# Copyright (c) 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -15,6 +15,7 @@
 
 
 import operator
+import six
 
 from nova.openstack.common import jsonutils
 from nova.scheduler import filters
@@ -32,7 +33,7 @@ class JsonFilter(filters.BaseHostFilter):
         if len(args) < 2:
             return False
         if op is operator.contains:
-            bad = not args[0] in args[1:]
+            bad = args[0] not in args[1:]
         else:
             bad = [arg for arg in args[1:]
                     if not op(args[0], arg)]
@@ -51,7 +52,7 @@ class JsonFilter(filters.BaseHostFilter):
         return self._op_compare(args, operator.gt)
 
     def _in(self, args):
-        """First term is in set of remaining terms"""
+        """First term is in set of remaining terms."""
         return self._op_compare(args, operator.contains)
 
     def _less_than_equal(self, args):
@@ -117,7 +118,7 @@ class JsonFilter(filters.BaseHostFilter):
         for arg in query[1:]:
             if isinstance(arg, list):
                 arg = self._process_filter(arg, host_state)
-            elif isinstance(arg, basestring):
+            elif isinstance(arg, six.string_types):
                 arg = self._parse_string(arg, host_state)
             if arg is not None:
                 cooked_args.append(arg)

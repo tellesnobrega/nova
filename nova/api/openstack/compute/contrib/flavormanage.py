@@ -10,7 +10,7 @@
 #    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
-#    under the License
+#    under the License.
 
 import webob
 
@@ -18,12 +18,11 @@ from nova.api.openstack.compute import flavors as flavors_api
 from nova.api.openstack.compute.views import flavors as flavors_view
 from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
-from nova.compute import instance_types
+from nova.compute import flavors
 from nova import exception
-from nova.openstack.common import log as logging
+from nova.openstack.common.gettextutils import _
 
 
-LOG = logging.getLogger(__name__)
 authorize = extensions.extension_authorizer('compute', 'flavormanage')
 
 
@@ -42,11 +41,12 @@ class FlavorManageController(wsgi.Controller):
         authorize(context)
 
         try:
-            flavor = instance_types.get_instance_type_by_flavor_id(id)
-        except exception.NotFound, e:
-            raise webob.exc.HTTPNotFound(explanation=str(e))
+            flavor = flavors.get_flavor_by_flavor_id(
+                    id, ctxt=context, read_deleted="no")
+        except exception.NotFound as e:
+            raise webob.exc.HTTPNotFound(explanation=e.format_message())
 
-        instance_types.destroy(flavor['name'])
+        flavors.destroy(flavor['name'])
 
         return webob.Response(status_int=202)
 
@@ -55,23 +55,35 @@ class FlavorManageController(wsgi.Controller):
     def _create(self, req, body):
         context = req.environ['nova.context']
         authorize(context)
-
+        if not self.is_valid_body(body, 'flavor'):
+            msg = _("Invalid request body")
+            raise webob.exc.HTTPBadRequest(explanation=msg)
         vals = body['flavor']
-        name = vals['name']
-        flavorid = vals['id']
-        memory_mb = vals.get('ram')
+        name = vals.get('name')
+        flavorid = vals.get('id')
+        memory = vals.get('ram')
         vcpus = vals.get('vcpus')
         root_gb = vals.get('disk')
-        ephemeral_gb = vals.get('OS-FLV-EXT-DATA:ephemeral')
-        swap = vals.get('swap')
-        rxtx_factor = vals.get('rxtx_factor')
+        ephemeral_gb = vals.get('OS-FLV-EXT-DATA:ephemeral', 0)
+        swap = vals.get('swap', 0)
+        rxtx_factor = vals.get('rxtx_factor', 1.0)
+        is_public = vals.get('os-flavor-access:is_public', True)
 
         try:
-            flavor = instance_types.create(name, memory_mb, vcpus,
-                                           root_gb, ephemeral_gb, flavorid,
-                                           swap, rxtx_factor)
-        except exception.InstanceTypeExists as err:
-            raise webob.exc.HTTPConflict(explanation=str(err))
+            flavor = flavors.create(name, memory, vcpus, root_gb,
+                                    ephemeral_gb=ephemeral_gb,
+                                    flavorid=flavorid, swap=swap,
+                                    rxtx_factor=rxtx_factor,
+                                    is_public=is_public)
+            if not flavor['is_public']:
+                flavors.add_flavor_access(flavor['flavorid'],
+                                          context.project_id, context)
+            req.cache_db_flavor(flavor)
+        except (exception.FlavorExists,
+                exception.FlavorIdExists) as err:
+            raise webob.exc.HTTPConflict(explanation=err.format_message())
+        except exception.InvalidInput as exc:
+            raise webob.exc.HTTPBadRequest(explanation=exc.format_message())
 
         return self._view_builder.show(req, flavor)
 

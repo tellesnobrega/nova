@@ -1,7 +1,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 # Copyright (c) 2011 Citrix Systems, Inc.
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -27,12 +27,11 @@ import urllib
 import urllib2
 import urlparse
 
-from nova import flags
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
+from nova import utils
 
 LOG = logging.getLogger(__name__)
-
-FLAGS = flags.FLAGS
 
 USER_AGENT = "OpenStack-ESX-Adapter"
 
@@ -47,8 +46,11 @@ class GlanceFileRead(object):
         self.iter = self.get_next()
 
     def read(self, chunk_size):
-        """Read an item from the queue. The chunk size is ignored for the
-        Client ImageBodyIterator uses its own CHUNKSIZE."""
+        """Read an item from the queue.
+
+        The chunk size is ignored for the Client ImageBodyIterator
+        uses its own CHUNKSIZE.
+        """
         try:
             return self.iter.next()
         except StopIteration:
@@ -83,7 +85,7 @@ class VMwareHTTPFile(object):
         """Close the file handle."""
         try:
             self.file_handle.close()
-        except Exception, exc:
+        except Exception as exc:
             LOG.exception(exc)
 
     def __del__(self):
@@ -100,23 +102,26 @@ class VMwareHTTPFile(object):
 
     def write(self, data):
         """Write data to the file."""
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def read(self, chunk_size):
         """Read a chunk of data."""
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def get_size(self):
         """Get size of the file to be read."""
-        raise NotImplementedError
+        raise NotImplementedError()
 
 
-class VMWareHTTPWriteFile(VMwareHTTPFile):
-    """VMWare file write handler class."""
+class VMwareHTTPWriteFile(VMwareHTTPFile):
+    """VMware file write handler class."""
 
     def __init__(self, host, data_center_name, datastore_name, cookies,
                  file_path, file_size, scheme="https"):
-        base_url = "%s://%s/folder/%s" % (scheme, host, file_path)
+        if utils.is_valid_ipv6(host):
+            base_url = "%s://[%s]/folder/%s" % (scheme, host, file_path)
+        else:
+            base_url = "%s://%s/folder/%s" % (scheme, host, file_path)
         param_list = {"dcPath": data_center_name, "dsName": datastore_name}
         base_url = base_url + "?" + urllib.urlencode(param_list)
         _urlparse = urlparse.urlparse(base_url)
@@ -141,14 +146,14 @@ class VMWareHTTPWriteFile(VMwareHTTPFile):
         """Get the response and close the connection."""
         try:
             self.conn.getresponse()
-        except Exception, excep:
+        except Exception as excep:
             LOG.debug(_("Exception during HTTP connection close in "
-                      "VMWareHTTpWrite. Exception is %s") % excep)
-        super(VMWareHTTPWriteFile, self).close()
+                      "VMwareHTTPWrite. Exception is %s") % excep)
+        super(VMwareHTTPWriteFile, self).close()
 
 
-class VmWareHTTPReadFile(VMwareHTTPFile):
-    """VMWare file read handler class."""
+class VMwareHTTPReadFile(VMwareHTTPFile):
+    """VMware file read handler class."""
 
     def __init__(self, host, data_center_name, datastore_name, cookies,
                  file_path, scheme="https"):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2010 OpenStack, LLC.
+# Copyright (c) 2010 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,33 +18,32 @@
 
 """Module for VNC Proxying."""
 
-from nova import flags
-from nova.openstack.common import cfg
+from oslo.config import cfg
 
 
 vnc_opts = [
     cfg.StrOpt('novncproxy_base_url',
                default='http://127.0.0.1:6080/vnc_auto.html',
-               help='location of vnc console proxy, in the form '
+               help='Location of VNC console proxy, in the form '
                     '"http://127.0.0.1:6080/vnc_auto.html"'),
     cfg.StrOpt('xvpvncproxy_base_url',
                default='http://127.0.0.1:6081/console',
-               help='location of nova xvp vnc console proxy, in the form '
+               help='Location of nova xvp VNC console proxy, in the form '
                     '"http://127.0.0.1:6081/console"'),
     cfg.StrOpt('vncserver_listen',
                default='127.0.0.1',
-               help='Ip address on which instance vncserversshould listen'),
+               help='IP address on which instance vncservers should listen'),
     cfg.StrOpt('vncserver_proxyclient_address',
                default='127.0.0.1',
-               help='the address to which proxy clients '
+               help='The address to which proxy clients '
                     '(like nova-xvpvncproxy) should connect'),
     cfg.BoolOpt('vnc_enabled',
                 default=True,
-                help='enable vnc related features'),
+                help='Enable VNC related features'),
     cfg.StrOpt('vnc_keymap',
                default='en-us',
-               help='keymap for vnc'),
+               help='Keymap for VNC'),
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(vnc_opts)
+CONF = cfg.CONF
+CONF.register_opts(vnc_opts)

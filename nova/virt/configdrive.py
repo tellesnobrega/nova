@@ -17,20 +17,19 @@
 
 """Config Drive v2 helper."""
 
-import base64
-import json
 import os
 import shutil
 import tempfile
 
-from nova.api.metadata import base as instance_metadata
+from oslo.config import cfg
+
 from nova import exception
-from nova import flags
-from nova.openstack.common import cfg
+from nova.openstack.common import fileutils
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
+from nova.openstack.common import units
 from nova import utils
 from nova import version
-from nova.virt.libvirt import utils as virtutils
 
 LOG = logging.getLogger(__name__)
 
@@ -42,30 +41,55 @@ configdrive_opts = [
                default=tempfile.tempdir,
                help=('Where to put temporary files associated with '
                      'config drive creation')),
+    # force_config_drive is a string option, to allow for future behaviors
+    #  (e.g. use config_drive based on image properties)
+    cfg.StrOpt('force_config_drive',
+               help='Set to force injection to take place on a config drive '
+                    '(if set, valid options are: always)'),
+    cfg.StrOpt('mkisofs_cmd',
+               default='genisoimage',
+               help='Name and optionally path of the tool used for '
+                    'ISO image creation')
     ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(configdrive_opts)
+CONF = cfg.CONF
+CONF.register_opts(configdrive_opts)
+
+# Config drives are 64mb, if we can't size to the exact size of the data
+CONFIGDRIVESIZE_BYTES = 64 * units.Mi
 
 
 class ConfigDriveBuilder(object):
+    """Build config drives, optionally as a context manager."""
+
     def __init__(self, instance_md=None):
         self.imagefile = None
 
         # TODO(mikal): I don't think I can use utils.tempdir here, because
         # I need to have the directory last longer than the scope of this
         # method call
-        self.tempdir = tempfile.mkdtemp(dir=FLAGS.config_drive_tempdir,
+        self.tempdir = tempfile.mkdtemp(dir=CONF.config_drive_tempdir,
                                         prefix='cd_gen_')
 
         if instance_md is not None:
             self.add_instance_metadata(instance_md)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exctype, excval, exctb):
+        if exctype is not None:
+            # NOTE(mikal): this means we're being cleaned up because an
+            # exception was thrown. All bets are off now, and we should not
+            # swallow the exception
+            return False
+        self.cleanup()
+
     def _add_file(self, path, data):
         filepath = os.path.join(self.tempdir, path)
         dirname = os.path.dirname(filepath)
-        virtutils.ensure_tree(dirname)
-        with open(filepath, 'w') as f:
+        fileutils.ensure_tree(dirname)
+        with open(filepath, 'wb') as f:
             f.write(data)
 
     def add_instance_metadata(self, instance_md):
@@ -75,14 +99,19 @@ class ConfigDriveBuilder(object):
                       {'filepath': path})
 
     def _make_iso9660(self, path):
-        utils.execute('genisoimage',
+        publisher = "%(product)s %(version)s" % {
+            'product': version.product_string(),
+            'version': version.version_string_with_package()
+            }
+
+        utils.execute(CONF.mkisofs_cmd,
                       '-o', path,
                       '-ldots',
                       '-allow-lowercase',
                       '-allow-multidot',
                       '-l',
-                      '-publisher', ('"OpenStack nova %s"'
-                                     % version.version_string()),
+                      '-publisher',
+                      publisher,
                       '-quiet',
                       '-J',
                       '-r',
@@ -93,30 +122,25 @@ class ConfigDriveBuilder(object):
 
     def _make_vfat(self, path):
         # NOTE(mikal): This is a little horrible, but I couldn't find an
-        # equivalent to genisoimage for vfat filesystems. vfat images are
-        # always 64mb.
-        with open(path, 'w') as f:
-            f.truncate(64 * 1024 * 1024)
+        # equivalent to genisoimage for vfat filesystems.
+        with open(path, 'wb') as f:
+            f.truncate(CONFIGDRIVESIZE_BYTES)
 
-        virtutils.mkfs('vfat', path, label='config-2')
+        utils.mkfs('vfat', path, label='config-2')
 
         mounted = False
         try:
-            mountdir = tempfile.mkdtemp(dir=FLAGS.config_drive_tempdir,
+            mountdir = tempfile.mkdtemp(dir=CONF.config_drive_tempdir,
                                         prefix='cd_mnt_')
-            _out, err = utils.trycmd('mount', '-o', 'loop', path, mountdir,
+            _out, err = utils.trycmd('mount', '-o',
+                                     'loop,uid=%d,gid=%d' % (os.getuid(),
+                                                             os.getgid()),
+                                     path, mountdir,
                                      run_as_root=True)
             if err:
                 raise exception.ConfigDriveMountFailed(operation='mount',
                                                        error=err)
             mounted = True
-
-            _out, err = utils.trycmd('chown',
-                                     '%s.%s' % (os.getuid(), os.getgid()),
-                                     mountdir, run_as_root=True)
-            if err:
-                raise exception.ConfigDriveMountFailed(operation='chown',
-                                                       error=err)
 
             # NOTE(mikal): I can't just use shutils.copytree here, because the
             # destination directory already exists. This is annoying.
@@ -130,19 +154,29 @@ class ConfigDriveBuilder(object):
             shutil.rmtree(mountdir)
 
     def make_drive(self, path):
-        if FLAGS.config_drive_format == 'iso9660':
+        """Make the config drive.
+
+        :param path: the path to place the config drive image at
+
+        :raises ProcessExecuteError if a helper process has failed.
+        """
+        if CONF.config_drive_format == 'iso9660':
             self._make_iso9660(path)
-        elif FLAGS.config_drive_format == 'vfat':
+        elif CONF.config_drive_format == 'vfat':
             self._make_vfat(path)
         else:
             raise exception.ConfigDriveUnknownFormat(
-                format=FLAGS.config_drive_format)
+                format=CONF.config_drive_format)
 
     def cleanup(self):
         if self.imagefile:
-            utils.delete_if_exists(self.imagefile)
+            fileutils.delete_if_exists(self.imagefile)
 
         try:
             shutil.rmtree(self.tempdir)
-        except OSError, e:
+        except OSError as e:
             LOG.error(_('Could not remove tmpdir: %s'), str(e))
+
+
+def required_by(instance):
+    return instance.get('config_drive') or CONF.force_config_drive

@@ -1,7 +1,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 # Copyright (c) 2011 Citrix Systems, Inc.
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -15,7 +15,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 """
-:mod:`vmwareapi` -- Nova support for VMware ESX/ESXi Server through VMware API.
+:mod:`vmwareapi` -- Nova support for VMware ESX/vCenter through VMware API.
 """
 # NOTE(sdague) for nicer compute_driver specification
-from nova.virt.vmwareapi.driver import VMWareESXDriver
+from nova.virt.vmwareapi import driver
+
+VMwareESXDriver = driver.VMwareESXDriver
+VMwareVCDriver = driver.VMwareVCDriver

@@ -1,7 +1,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 # Copyright 2011 Justin Santa Barbara
-# Copyright 2012 OpenStack LLC
+# Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -16,22 +16,21 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-"""Implementation of a fake image service"""
+"""Implementation of a fake image service."""
 
 import copy
 import datetime
+import uuid
+
+from oslo.config import cfg
 
 from nova import exception
-from nova import flags
 import nova.image.glance
 from nova.openstack.common import log as logging
-from nova import utils
 
-
+CONF = cfg.CONF
+CONF.import_opt('null_kernel', 'nova.compute.api')
 LOG = logging.getLogger(__name__)
-
-
-FLAGS = flags.FLAGS
 
 
 class _FakeImageService(object):
@@ -41,7 +40,7 @@ class _FakeImageService(object):
         self.images = {}
         # NOTE(justinsb): The OpenStack API can't upload an image?
         # So, make sure we've got one..
-        timestamp = datetime.datetime(2011, 01, 01, 01, 02, 03)
+        timestamp = datetime.datetime(2011, 1, 1, 1, 2, 3)
 
         image1 = {'id': '155d900f-4e14-4e4c-a73d-069cbf4541e6',
                  'name': 'fakeimage123456',
@@ -53,8 +52,9 @@ class _FakeImageService(object):
                  'is_public': False,
                  'container_format': 'raw',
                  'disk_format': 'raw',
-                 'properties': {'kernel_id': FLAGS.null_kernel,
-                                'ramdisk_id': FLAGS.null_kernel,
+                 'size': '25165824',
+                 'properties': {'kernel_id': CONF.null_kernel,
+                                'ramdisk_id': CONF.null_kernel,
                                 'architecture': 'x86_64'}}
 
         image2 = {'id': 'a2459075-d96c-40d5-893e-577ff92e721c',
@@ -67,8 +67,9 @@ class _FakeImageService(object):
                  'is_public': True,
                  'container_format': 'ami',
                  'disk_format': 'ami',
-                 'properties': {'kernel_id': FLAGS.null_kernel,
-                                'ramdisk_id': FLAGS.null_kernel}}
+                 'size': '58145823',
+                 'properties': {'kernel_id': CONF.null_kernel,
+                                'ramdisk_id': CONF.null_kernel}}
 
         image3 = {'id': '76fa36fc-c930-4bf3-8c8a-ea2a2420deb6',
                  'name': 'fakeimage123456',
@@ -80,8 +81,9 @@ class _FakeImageService(object):
                  'is_public': True,
                  'container_format': None,
                  'disk_format': None,
-                 'properties': {'kernel_id': FLAGS.null_kernel,
-                                'ramdisk_id': FLAGS.null_kernel}}
+                 'size': '83594576',
+                 'properties': {'kernel_id': CONF.null_kernel,
+                                'ramdisk_id': CONF.null_kernel}}
 
         image4 = {'id': 'cedef40a-ed67-4d10-800e-17455edce175',
                  'name': 'fakeimage123456',
@@ -93,8 +95,9 @@ class _FakeImageService(object):
                  'is_public': True,
                  'container_format': 'ami',
                  'disk_format': 'ami',
-                 'properties': {'kernel_id': FLAGS.null_kernel,
-                                'ramdisk_id': FLAGS.null_kernel}}
+                 'size': '84035174',
+                 'properties': {'kernel_id': CONF.null_kernel,
+                                'ramdisk_id': CONF.null_kernel}}
 
         image5 = {'id': 'c905cedb-7281-47e4-8a62-f26bc5fc4c77',
                  'name': 'fakeimage123456',
@@ -106,6 +109,7 @@ class _FakeImageService(object):
                  'is_public': True,
                  'container_format': 'ami',
                  'disk_format': 'ami',
+                 'size': '26360814',
                  'properties': {'kernel_id':
                                     '155d900f-4e14-4e4c-a73d-069cbf4541e6',
                                 'ramdisk_id': None}}
@@ -120,8 +124,9 @@ class _FakeImageService(object):
                  'is_public': False,
                  'container_format': 'ova',
                  'disk_format': 'vhd',
-                 'properties': {'kernel_id': FLAGS.null_kernel,
-                                'ramdisk_id': FLAGS.null_kernel,
+                 'size': '49163826',
+                 'properties': {'kernel_id': CONF.null_kernel,
+                                'ramdisk_id': CONF.null_kernel,
                                 'architecture': 'x86_64',
                                 'auto_disk_config': 'False'}}
 
@@ -135,8 +140,9 @@ class _FakeImageService(object):
                  'is_public': False,
                  'container_format': 'ova',
                  'disk_format': 'vhd',
-                 'properties': {'kernel_id': FLAGS.null_kernel,
-                                'ramdisk_id': FLAGS.null_kernel,
+                 'size': '74185822',
+                 'properties': {'kernel_id': CONF.null_kernel,
+                                'ramdisk_id': CONF.null_kernel,
                                 'architecture': 'x86_64',
                                 'auto_disk_config': 'True'}}
 
@@ -155,9 +161,13 @@ class _FakeImageService(object):
         """Return list of detailed image information."""
         return copy.deepcopy(self.images.values())
 
-    def download(self, context, image_id, data):
+    def download(self, context, image_id, dst_path=None, data=None):
         self.show(context, image_id)
-        data.write(self._imagedata.get(image_id, ''))
+        if data:
+            data.write(self._imagedata.get(image_id, ''))
+        elif dst_path:
+            with open(dst_path, 'wb') as data:
+                data.write(self._imagedata.get(image_id, ''))
 
     def show(self, context, image_id):
         """Get data about specified image.
@@ -178,10 +188,10 @@ class _FakeImageService(object):
         :raises: Duplicate if the image already exist.
 
         """
-        image_id = str(metadata.get('id', utils.gen_uuid()))
+        image_id = str(metadata.get('id', uuid.uuid4()))
         metadata['id'] = image_id
         if image_id in self.images:
-            raise exception.Duplicate()
+            raise exception.CouldNotUploadImage(image_id=image_id)
         self.images[image_id] = copy.deepcopy(metadata)
         if data:
             self._imagedata[image_id] = data.read()
@@ -202,7 +212,7 @@ class _FakeImageService(object):
             image = self.images[image_id]
             try:
                 image['properties'].update(metadata.pop('properties'))
-            except Exception:
+            except KeyError:
                 pass
             image.update(metadata)
         return self.images[image_id]
@@ -217,6 +227,10 @@ class _FakeImageService(object):
         if not removed:
             raise exception.ImageNotFound(image_id=image_id)
 
+    def get_location(self, context, image_id):
+        if image_id in self.images:
+            return 'fake_location'
+        return None
 
 _fakeImageService = _FakeImageService()
 
@@ -230,10 +244,14 @@ def FakeImageService_reset():
     _fakeImageService = _FakeImageService()
 
 
+def get_valid_image_id():
+    return _fakeImageService.images.keys()[0]
+
+
 def stub_out_image_service(stubs):
-    def fake_get_remote_image_service(context, image_href):
-        return (FakeImageService(), image_href)
+    image_service = FakeImageService()
     stubs.Set(nova.image.glance, 'get_remote_image_service',
-              lambda x, y: (FakeImageService(), y))
+              lambda x, y: (image_service, y))
     stubs.Set(nova.image.glance, 'get_default_image_service',
-              lambda: FakeImageService())
+              lambda: image_service)
+    return image_service

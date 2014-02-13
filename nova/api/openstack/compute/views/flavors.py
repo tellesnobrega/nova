@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2010-2011 OpenStack LLC.
+# Copyright 2010-2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -41,19 +41,11 @@ class ViewBuilder(common.ViewBuilder):
                 "ram": flavor["memory_mb"],
                 "disk": flavor["root_gb"],
                 "vcpus": flavor.get("vcpus") or "",
-                "swap": flavor.get("swap") or "",
-                "rxtx_factor": flavor.get("rxtx_factor") or "",
                 "links": self._get_links(request,
                                          flavor["flavorid"],
                                          self._collection_name),
             },
         }
-
-        # NOTE(sirp): disabled attribute is namespaced for now for
-        # compatability with the OpenStack API. This should ultimately be made
-        # a first class attribute.
-        flavor_dict["flavor"]["OS-FLV-DISABLED:disabled"] =\
-                flavor.get("disabled", "")
 
         return flavor_dict
 
@@ -78,3 +70,15 @@ class ViewBuilder(common.ViewBuilder):
             flavors_dict["flavors_links"] = flavors_links
 
         return flavors_dict
+
+
+class V3ViewBuilder(ViewBuilder):
+    def show(self, request, flavor):
+        flavor_dict = super(V3ViewBuilder, self).show(request, flavor)
+        flavor_dict['flavor'].update({
+            "swap": flavor["swap"],
+            "ephemeral": flavor["ephemeral_gb"],
+            "disabled": flavor["disabled"],
+            "vcpus": flavor["vcpus"],
+        })
+        return flavor_dict

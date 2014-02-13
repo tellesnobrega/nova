@@ -16,6 +16,8 @@ eventlet.monkey_patch()
 import os
 import sys
 
+from oslo.config import cfg
+
 # If ../nova/__init__.py exists, add ../ to Python search path, so that
 # it will override what happens to be installed in /usr/(local/)lib/python...
 POSSIBLE_TOPDIR = os.path.normpath(os.path.join(os.path.abspath(sys.argv[0]),
@@ -25,14 +27,11 @@ POSSIBLE_TOPDIR = os.path.normpath(os.path.join(os.path.abspath(sys.argv[0]),
 if os.path.exists(os.path.join(POSSIBLE_TOPDIR, 'nova', '__init__.py')):
     sys.path.insert(0, POSSIBLE_TOPDIR)
 
-from nova import flags
-from nova.openstack.common import cfg
-from nova.openstack.common import log as logging
+from nova import config
 from nova import utils
 from nova.virt.xenapi import driver as xenapi_driver
 from nova.virt.xenapi import vm_utils
 
-FLAGS = flags.FLAGS
 destroy_opts = [
     cfg.BoolOpt('all_cached',
                 default=False,
@@ -43,11 +42,12 @@ destroy_opts = [
                 help='Don\'t actually delete the VDIs.')
 ]
 
-FLAGS.register_cli_opts(destroy_opts)
+CONF = cfg.CONF
+CONF.register_cli_opts(destroy_opts)
 
 
 def main():
-    flags.parse_args(sys.argv)
+    config.parse_args(sys.argv)
     utils.monkey_patch()
 
     xenapi = xenapi_driver.XenAPIDriver()
@@ -55,8 +55,8 @@ def main():
 
     sr_ref = vm_utils.safe_find_sr(session)
     destroyed = vm_utils.destroy_cached_images(
-            session, sr_ref, all_cached=FLAGS.all_cached,
-            dry_run=FLAGS.dry_run)
+            session, sr_ref, all_cached=CONF.all_cached,
+            dry_run=CONF.dry_run)
 
     if '--verbose' in sys.argv:
         print '\n'.join(destroyed)

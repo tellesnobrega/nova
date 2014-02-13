@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2010-2011 OpenStack LLC.
+# Copyright 2010-2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -24,10 +24,10 @@ XenServer hosts.
 import os
 import sys
 
-import novalib
-
 # This is written to Python 2.4, since that is what is available on XenServer
 import simplejson as json
+
+import novalib  # noqa
 
 
 def main(dom_id, command, only_this_vif=None):

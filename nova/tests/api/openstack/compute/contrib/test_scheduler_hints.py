@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 #
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -16,9 +16,8 @@
 #    under the License.
 
 from nova.api.openstack import compute
-import nova.db.api
+import nova.compute.api
 from nova.openstack.common import jsonutils
-import nova.openstack.common.rpc
 from nova import test
 from nova.tests.api.openstack import fakes
 
@@ -31,7 +30,11 @@ class SchedulerHintsTestCase(test.TestCase):
     def setUp(self):
         super(SchedulerHintsTestCase, self).setUp()
         self.fake_instance = fakes.stub_instance(1, uuid=UUID)
-        self.app = compute.APIRouter()
+        self.flags(
+            osapi_compute_extension=[
+                'nova.api.openstack.compute.contrib.select_extensions'],
+            osapi_compute_ext_list=['Scheduler_hints'])
+        self.app = compute.APIRouter(init_only=('servers',))
 
     def test_create_server_without_hints(self):
 
@@ -90,23 +93,6 @@ class SchedulerHintsTestCase(test.TestCase):
             },
             'os:scheduler_hints': 'here',
         }
-
-        req.body = jsonutils.dumps(body)
-        res = req.get_response(self.app)
-        self.assertEqual(400, res.status_int)
-
-    def test_create_missing_server(self):
-        """Test create with malformed body"""
-
-        def fake_create(*args, **kwargs):
-            raise Exception("Request should not reach the compute API.")
-
-        self.stubs.Set(nova.compute.api.API, 'create', fake_create)
-
-        req = fakes.HTTPRequest.blank('/fake/servers')
-        req.method = 'POST'
-        req.content_type = 'application/json'
-        body = {'os:scheduler_hints': {'a': 'b'}}
 
         req.body = jsonutils.dumps(body)
         res = req.get_response(self.app)

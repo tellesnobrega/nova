@@ -2,7 +2,7 @@
 
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2012 OpenStack LLC.
+# Copyright 2012 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -31,11 +31,16 @@ Run like:
 
     ./tools/db/schema_diff.py mysql master:latest my_branch:82
 """
+
+from __future__ import print_function
+
 import datetime
 import glob
 import os
 import subprocess
 import sys
+
+from nova.openstack.common.gettextutils import _
 
 
 ### Dump
@@ -98,7 +103,7 @@ class Postgres(object):
                 shell=True)
 
     def url(self, name):
-        return 'postgres://localhost/%s' % name
+        return 'postgresql://localhost/%s' % name
 
 
 def _get_db_driver_class(db_type):
@@ -107,7 +112,7 @@ def _get_db_driver_class(db_type):
     elif db_type == "postgres":
         return Postgres
     else:
-        raise Exception("database %s not supported" % db_type)
+        raise Exception(_("database %s not supported") % db_type)
 
 
 ### Migrate
@@ -189,19 +194,19 @@ def git_has_uncommited_changes():
 
 
 def die(msg):
-    print >> sys.stderr, "ERROR: %s" % msg
+    print("ERROR: %s" % msg, file=sys.stderr)
     sys.exit(1)
 
 
 def usage(msg=None):
     if msg:
-        print >> sys.stderr, "ERROR: %s" % msg
+        print("ERROR: %s" % msg, file=sys.stderr)
 
     prog = "schema_diff.py"
     args = ["<mysql|postgres>", "<orig-branch:orig-version>",
             "<new-branch:new-version>"]
 
-    print >> sys.stderr, "usage: %s %s" % (prog, ' '.join(args))
+    print("usage: %s %s" % (prog, ' '.join(args)), file=sys.stderr)
     sys.exit(1)
 
 

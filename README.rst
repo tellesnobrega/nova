@@ -3,7 +3,7 @@ OpenStack Nova README
 
 OpenStack Nova provides a cloud computing fabric controller,
 supporting a wide variety of virtualization technologies,
-including KVM, Xen, LXC, VMWare, and more. In addition to
+including KVM, Xen, LXC, VMware, and more. In addition to
 its native API, it includes compatibility with the commonly
 encountered Amazon EC2 and S3 APIs.
 
@@ -24,6 +24,11 @@ available online at:
 
    http://docs.openstack.org
 
+For information about the different compute (hypervisor) drivers
+supported by Nova, read this page on the wiki:
+
+   https://wiki.openstack.org/wiki/HypervisorSupportMatrix
+
 In the unfortunate event that bugs are discovered, they should
 be reported to the appropriate bug tracker. If you obtained
 the software from a 3rd party operating system vendor, it is
@@ -39,10 +44,10 @@ the master GIT repository at:
 
    http://github.com/openstack/nova
 
-Developers should also join the dicussion on the mailing list,
+Developers should also join the discussion on the mailing list,
 at:
 
-   https://lists.launchpad.net/openstack/
+   http://lists.openstack.org/cgi-bin/mailman/listinfo/openstack
 
 Any new code must follow the development guidelines detailed
 in the HACKING.rst file, and pass all unit tests. Further
@@ -50,9 +55,7 @@ developer focused documentation is available at:
 
    http://nova.openstack.org/
 
-Changes to OpenStack Nova should be submitted for review via
-the Gerrit tool, following the workflow documented at:
-
-   http://wiki.openstack.org/GerritWorkflow
+For information on how to contribute to Nova, please see the
+contents of the CONTRIBUTING.rst file.
 
 -- End of broadcast

@@ -27,7 +27,7 @@ def fake_get_floating_ip_pools(self, context):
             {'name': 'other'}]
 
 
-class FloatingIpPoolTest(test.TestCase):
+class FloatingIpPoolTest(test.NoDBTestCase):
     def setUp(self):
         super(FloatingIpPoolTest, self).setUp()
         self.stubs.Set(network.api.API, "get_floating_ip_pools",
@@ -39,7 +39,7 @@ class FloatingIpPoolTest(test.TestCase):
     def test_translate_floating_ip_pools_view(self):
         pools = fake_get_floating_ip_pools(None, self.context)
         view = floating_ip_pools._translate_floating_ip_pools_view(pools)
-        self.assertTrue('floating_ip_pools' in view)
+        self.assertIn('floating_ip_pools', view)
         self.assertEqual(view['floating_ip_pools'][0]['name'],
                          pools[0]['name'])
         self.assertEqual(view['floating_ip_pools'][1]['name'],
@@ -54,7 +54,7 @@ class FloatingIpPoolTest(test.TestCase):
         self.assertEqual(res_dict, response)
 
 
-class FloatingIpPoolSerializerTest(test.TestCase):
+class FloatingIpPoolSerializerTest(test.NoDBTestCase):
     def test_index_serializer(self):
         serializer = floating_ip_pools.FloatingIPPoolsTemplate()
         text = serializer.serialize(dict(

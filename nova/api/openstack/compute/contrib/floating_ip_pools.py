@@ -12,16 +12,14 @@
 #    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
-#    under the License
+#    under the License.
 
 from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
 from nova import network
-from nova.openstack.common import log as logging
 
 
-LOG = logging.getLogger(__name__)
 authorize = extensions.extension_authorizer('compute', 'floating_ip_pools')
 
 
@@ -76,9 +74,9 @@ class FloatingIPPoolsController(object):
 
 
 class Floating_ip_pools(extensions.ExtensionDescriptor):
-    """Floating IPs support"""
+    """Floating IPs support."""
 
-    name = "Floating_ip_pools"
+    name = "FloatingIpPools"
     alias = "os-floating-ip-pools"
     namespace = ("http://docs.openstack.org/compute/ext/"
                  "floating_ip_pools/api/v1.1")

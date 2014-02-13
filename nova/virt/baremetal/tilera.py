@@ -1,6 +1,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2011 University of Southern California
+# Copyright (c) 2011-2013 University of Southern California / ISI
+# All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -15,350 +16,338 @@
 #    under the License.
 
 """
-Tilera back-end for bare-metal compute node provisioning
-
-The details of this implementation are specific to ISI's testbed. This code
-is provided here as an example of how to implement a backend.
+Class for Tilera bare-metal nodes.
 """
 
 import base64
-import subprocess
-import time
+import os
 
-from nova.compute import power_state
+import jinja2
+from oslo.config import cfg
+
+from nova.compute import flavors
 from nova import exception
-from nova import flags
-from nova.openstack.common import cfg
+from nova.openstack.common.db import exception as db_exc
+from nova.openstack.common import fileutils
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 from nova import utils
+from nova.virt.baremetal import baremetal_states
+from nova.virt.baremetal import base
+from nova.virt.baremetal import db
+from nova.virt.baremetal import utils as bm_utils
 
-FLAGS = flags.FLAGS
-
-tilera_opts = [
-    cfg.StrOpt('tile_monitor',
-               default='/usr/local/TileraMDE/bin/tile-monitor',
-               help='Tilera command line program for Bare-metal driver')
-    ]
-
-FLAGS.register_opts(tilera_opts)
 
 LOG = logging.getLogger(__name__)
 
+CONF = cfg.CONF
+CONF.import_opt('use_ipv6', 'nova.netconf')
+CONF.import_opt('net_config_template', 'nova.virt.baremetal.pxe',
+                group='baremetal')
 
-def get_baremetal_nodes():
-    return BareMetalNodes()
+
+def build_network_config(network_info):
+    interfaces = bm_utils.map_network_interfaces(network_info, CONF.use_ipv6)
+    tmpl_path, tmpl_file = os.path.split(CONF.baremetal.net_config_template)
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(tmpl_path))
+    template = env.get_template(tmpl_file)
+    return template.render({'interfaces': interfaces,
+                            'use_ipv6': CONF.use_ipv6})
 
 
-class BareMetalNodes(object):
+def get_image_dir_path(instance):
+    """Generate the dir for an instances disk."""
+    return os.path.join(CONF.instances_path, instance['name'])
+
+
+def get_image_file_path(instance):
+    """Generate the full path for an instances disk."""
+    return os.path.join(CONF.instances_path, instance['name'], 'disk')
+
+
+def get_tilera_nfs_path(node_id):
+    """Generate the path for an instances Tilera nfs."""
+    tilera_nfs_dir = "fs_" + str(node_id)
+    return os.path.join(CONF.baremetal.tftp_root, tilera_nfs_dir)
+
+
+def get_partition_sizes(instance):
+    flavor = flavors.extract_flavor(instance)
+    root_mb = flavor['root_gb'] * 1024
+    swap_mb = flavor['swap']
+
+    if swap_mb < 1:
+        swap_mb = 1
+
+    return (root_mb, swap_mb)
+
+
+def get_tftp_image_info(instance):
     """
-    This manages node information and implements singleton.
+    Generate the paths for tftp files for this instance.
 
-    BareMetalNodes class handles machine architectures of interest to
-    technical computing users have either poor or non-existent support
-    for virtualization.
+    Raises NovaException if
+    - instance does not contain kernel_id
     """
-
-    _instance = None
-    _is_init = False
-
-    def __new__(cls, *args, **kwargs):
-        """
-        Returns the BareMetalNodes singleton.
-        """
-        if not cls._instance or ('new' in kwargs and kwargs['new']):
-            cls._instance = super(BareMetalNodes, cls).__new__(cls)
-        return cls._instance
-
-    def __init__(self, file_name="/tftpboot/tilera_boards"):
-        """
-        Only call __init__ the first time object is instantiated.
-
-        From the bare-metal node list file: /tftpboot/tilera_boards,
-        reads each item of each node such as node ID, IP address,
-        MAC address, vcpus, memory, hdd, hypervisor type/version, and cpu
-        and appends each node information into nodes list.
-        """
-        if self._is_init:
-            return
-        self._is_init = True
-
-        self.nodes = []
-        self.BOARD_ID = 0
-        self.IP_ADDR = 1
-        self.MAC_ADDR = 2
-        self.VCPUS = 3
-        self.MEMORY_MB = 4
-        self.LOCAL_GB = 5
-        self.MEMORY_MB_USED = 6
-        self.LOCAL_GB_USED = 7
-        self.HYPERVISOR_TYPE = 8
-        self.HYPERVISOR_VER = 9
-        self.CPU_INFO = 10
-
-        fp = open(file_name, "r")
-        for item in fp:
-            l = item.split()
-            if l[0] == '#':
-                continue
-            l_d = {'node_id': int(l[self.BOARD_ID]),
-                    'ip_addr': l[self.IP_ADDR],
-                    'mac_addr': l[self.MAC_ADDR],
-                    'status': power_state.NOSTATE,
-                    'vcpus': int(l[self.VCPUS]),
-                    'memory_mb': int(l[self.MEMORY_MB]),
-                    'local_gb': int(l[self.LOCAL_GB]),
-                    'memory_mb_used': int(l[self.MEMORY_MB_USED]),
-                    'local_gb_used': int(l[self.LOCAL_GB_USED]),
-                    'hypervisor_type': l[self.HYPERVISOR_TYPE],
-                    'hypervisor_version': int(l[self.HYPERVISOR_VER]),
-                    'cpu_info': l[self.CPU_INFO]}
-            self.nodes.append(l_d)
-        fp.close()
-
-    def get_hw_info(self, field):
-        """
-        Returns hardware information of bare-metal node by the given field.
-
-        Given field can be vcpus, memory_mb, local_gb, memory_mb_used,
-        local_gb_used, hypervisor_type, hypervisor_version, and cpu_info.
-        """
-        for node in self.nodes:
-            if node['node_id'] == 9:
-                if field == 'vcpus':
-                    return node['vcpus']
-                elif field == 'memory_mb':
-                    return node['memory_mb']
-                elif field == 'local_gb':
-                    return node['local_gb']
-                elif field == 'memory_mb_used':
-                    return node['memory_mb_used']
-                elif field == 'local_gb_used':
-                    return node['local_gb_used']
-                elif field == 'hypervisor_type':
-                    return node['hypervisor_type']
-                elif field == 'hypervisor_version':
-                    return node['hypervisor_version']
-                elif field == 'cpu_info':
-                    return node['cpu_info']
-
-    def set_status(self, node_id, status):
-        """
-        Sets status of the given node by the given status.
-
-        Returns 1 if the node is in the nodes list.
-        """
-        for node in self.nodes:
-            if node['node_id'] == node_id:
-                node['status'] = status
-                return True
-        return False
-
-    def get_status(self):
-        """
-        Gets status of the given node.
-        """
+    image_info = {
+            'kernel': [None, None],
+            }
+    try:
+        image_info['kernel'][0] = str(instance['kernel_id'])
+    except KeyError:
         pass
 
-    def get_idle_node(self):
-        """
-        Gets an idle node, sets the status as 1 (RUNNING) and Returns node ID.
-        """
-        for item in self.nodes:
-            if item['status'] == 0:
-                item['status'] = 1      # make status RUNNING
-                return item['node_id']
-        raise exception.NotFound("No free nodes available")
-
-    def get_ip_by_id(self, id):
-        """
-        Returns default IP address of the given node.
-        """
-        for item in self.nodes:
-            if item['node_id'] == id:
-                return item['ip_addr']
-
-    def free_node(self, node_id):
-        """
-        Sets/frees status of the given node as 0 (IDLE).
-        """
-        LOG.debug(_("free_node...."))
-        for item in self.nodes:
-            if item['node_id'] == str(node_id):
-                item['status'] = 0  # make status IDLE
-
-    def power_mgr(self, node_id, mode):
-        """
-        Changes power state of the given node.
-
-        According to the mode (1-ON, 2-OFF, 3-REBOOT), power state can be
-        changed. /tftpboot/pdu_mgr script handles power management of
-        PDU (Power Distribution Unit).
-        """
-        if node_id < 5:
-            pdu_num = 1
-            pdu_outlet_num = node_id + 5
+    missing_labels = []
+    for label in image_info.keys():
+        (uuid, path) = image_info[label]
+        if not uuid:
+            missing_labels.append(label)
         else:
-            pdu_num = 2
-            pdu_outlet_num = node_id
-        path1 = "10.0.100." + str(pdu_num)
-        utils.execute('/tftpboot/pdu_mgr', path1, str(pdu_outlet_num),
-                      str(mode), '>>', 'pdu_output')
+            image_info[label][1] = os.path.join(CONF.baremetal.tftp_root,
+                            instance['uuid'], label)
+    if missing_labels:
+        raise exception.NovaException(_(
+            "Can not activate Tilera bootloader. "
+            "The following boot parameters "
+            "were not passed to baremetal driver: %s") % missing_labels)
+    return image_info
 
-    def deactivate_node(self, node_id):
-        """
-        Deactivates the given node by turnning it off.
 
-        /tftpboot/fs_x directory is a NFS of node#x
-        and /tftpboot/root_x file is an file system image of node#x.
+class Tilera(base.NodeDriver):
+    """Tilera bare metal driver."""
+
+    def __init__(self, virtapi):
+        super(Tilera, self).__init__(virtapi)
+
+    def _collect_mac_addresses(self, context, node):
+        macs = set()
+        for nic in db.bm_interface_get_all_by_bm_node_id(context, node['id']):
+            if nic['address']:
+                macs.add(nic['address'])
+        return sorted(macs)
+
+    def _cache_tftp_images(self, context, instance, image_info):
+        """Fetch the necessary kernels and ramdisks for the instance."""
+        fileutils.ensure_tree(
+                os.path.join(CONF.baremetal.tftp_root, instance['uuid']))
+
+        LOG.debug(_("Fetching kernel and ramdisk for instance %s") %
+                        instance['name'])
+        for label in image_info.keys():
+            (uuid, path) = image_info[label]
+            bm_utils.cache_image(
+                    context=context,
+                    target=path,
+                    image_id=uuid,
+                    user_id=instance['user_id'],
+                    project_id=instance['project_id'],
+                )
+
+    def _cache_image(self, context, instance, image_meta):
+        """Fetch the instance's image from Glance
+
+        This method pulls the relevant AMI and associated kernel and ramdisk,
+        and the deploy kernel and ramdisk from Glance, and writes them
+        to the appropriate places on local disk.
+
+        Both sets of kernel and ramdisk are needed for Tilera booting, so these
+        are stored under CONF.baremetal.tftp_root.
+
+        At present, the AMI is cached and certain files are injected.
+        Debian/ubuntu-specific assumptions are made regarding the injected
+        files. In a future revision, this functionality will be replaced by a
+        more scalable and os-agnostic approach: the deployment ramdisk will
+        fetch from Glance directly, and write its own last-mile configuration.
         """
-        node_ip = self.get_ip_by_id(node_id)
-        LOG.debug(_("deactivate_node is called for "
-                    "node_id = %(id)s node_ip = %(ip)s"),
-                  {'id': str(node_id), 'ip': node_ip})
-        for item in self.nodes:
-            if item['node_id'] == node_id:
-                LOG.debug(_("status of node is set to 0"))
-                item['status'] = 0
-        self.power_mgr(node_id, 2)
-        self.sleep_mgr(5)
-        path = "/tftpboot/fs_" + str(node_id)
-        pathx = "/tftpboot/root_" + str(node_id)
-        utils.execute('sudo', '/usr/sbin/rpc.mountd')
+        fileutils.ensure_tree(get_image_dir_path(instance))
+        image_path = get_image_file_path(instance)
+
+        LOG.debug(_("Fetching image %(ami)s for instance %(name)s") %
+                        {'ami': image_meta['id'], 'name': instance['name']})
+        bm_utils.cache_image(context=context,
+                             target=image_path,
+                             image_id=image_meta['id'],
+                             user_id=instance['user_id'],
+                             project_id=instance['project_id']
+                        )
+
+        return [image_meta['id'], image_path]
+
+    def _inject_into_image(self, context, node, instance, network_info,
+            injected_files=None, admin_password=None):
+        """Inject last-mile configuration into instances image
+
+        Much of this method is a hack around DHCP and cloud-init
+        not working together with baremetal provisioning yet.
+        """
+        partition = None
+        if not instance['kernel_id']:
+            partition = "1"
+
+        ssh_key = None
+        if 'key_data' in instance and instance['key_data']:
+            ssh_key = str(instance['key_data'])
+
+        if injected_files is None:
+            injected_files = []
+        else:
+            injected_files = list(injected_files)
+
+        net_config = build_network_config(network_info)
+
+        if instance['hostname']:
+            injected_files.append(('/etc/hostname', instance['hostname']))
+
+        LOG.debug(_("Injecting files into image for instance %(name)s") %
+                        {'name': instance['name']})
+
+        bm_utils.inject_into_image(
+                    image=get_image_file_path(instance),
+                    key=ssh_key,
+                    net=net_config,
+                    metadata=utils.instance_meta(instance),
+                    admin_password=admin_password,
+                    files=injected_files,
+                    partition=partition,
+                )
+
+    def cache_images(self, context, node, instance,
+            admin_password, image_meta, injected_files, network_info):
+        """Prepare all the images for this instance."""
+        tftp_image_info = get_tftp_image_info(instance)
+        self._cache_tftp_images(context, instance, tftp_image_info)
+
+        self._cache_image(context, instance, image_meta)
+        self._inject_into_image(context, node, instance, network_info,
+                injected_files, admin_password)
+
+    def destroy_images(self, context, node, instance):
+        """Delete instance's image file."""
+        bm_utils.unlink_without_raise(get_image_file_path(instance))
+        bm_utils.rmtree_without_raise(get_image_dir_path(instance))
+
+    def activate_bootloader(self, context, node, instance, network_info):
+        """Configure Tilera boot loader for an instance
+
+        Kernel and ramdisk images are downloaded by cache_tftp_images,
+        and stored in /tftpboot/{uuid}/
+
+        This method writes the instances config file, and then creates
+        symlinks for each MAC address in the instance.
+
+        By default, the complete layout looks like this:
+
+        /tftpboot/
+            ./{uuid}/
+                 kernel
+            ./fs_node_id/
+        """
+        image_info = get_tftp_image_info(instance)
+        (root_mb, swap_mb) = get_partition_sizes(instance)
+        tilera_nfs_path = get_tilera_nfs_path(node['id'])
+        image_file_path = get_image_file_path(instance)
+
+        deployment_key = bm_utils.random_alnum(32)
+        db.bm_node_update(context, node['id'],
+                {'deploy_key': deployment_key,
+                 'image_path': image_file_path,
+                 'pxe_config_path': tilera_nfs_path,
+                 'root_mb': root_mb,
+                 'swap_mb': swap_mb})
+
+        if os.path.exists(image_file_path) and \
+           os.path.exists(tilera_nfs_path):
+            utils.execute('mount', '-o', 'loop', image_file_path,
+                tilera_nfs_path, run_as_root=True)
+
+    def deactivate_bootloader(self, context, node, instance):
+        """Delete Tilera bootloader images and config."""
         try:
-            utils.execute('sudo', 'umount', '-f', pathx)
-            utils.execute('sudo', 'rm', '-f', pathx)
-        except Exception:
-            LOG.debug(_("rootfs is already removed"))
+            db.bm_node_update(context, node['id'],
+                    {'deploy_key': None,
+                     'image_path': None,
+                     'pxe_config_path': None,
+                     'root_mb': 0,
+                     'swap_mb': 0})
+        except exception.NodeNotFound:
+            pass
 
-    def network_set(self, node_ip, mac_address, ip_address):
-        """
-        Sets network configuration based on the given ip and mac address.
+        tilera_nfs_path = get_tilera_nfs_path(node['id'])
 
-        User can access the bare-metal node using ssh.
-        """
-        cmd = (FLAGS.tile_monitor +
-               " --resume --net " + node_ip + " --run - " +
-               "ifconfig xgbe0 hw ether " + mac_address +
-               " - --wait --run - ifconfig xgbe0 " + ip_address +
-               " - --wait --quit")
-        subprocess.Popen(cmd, shell=True)
-        #utils.execute(cmd, shell=True)
-        self.sleep_mgr(5)
+        if os.path.ismount(tilera_nfs_path):
+            utils.execute('rpc.mountd', run_as_root=True)
+            utils.execute('umount', '-f', tilera_nfs_path, run_as_root=True)
 
-    def iptables_set(self, node_ip, user_data):
+        try:
+            image_info = get_tftp_image_info(instance)
+        except exception.NovaException:
+            pass
+        else:
+            for label in image_info.keys():
+                (uuid, path) = image_info[label]
+                bm_utils.unlink_without_raise(path)
+
+        try:
+            macs = self._collect_mac_addresses(context, node)
+        except db_exc.DBError:
+            pass
+
+        if os.path.exists(os.path.join(CONF.baremetal.tftp_root,
+                instance['uuid'])):
+            bm_utils.rmtree_without_raise(
+                os.path.join(CONF.baremetal.tftp_root, instance['uuid']))
+
+    def _iptables_set(self, node_ip, user_data):
         """
         Sets security setting (iptables:port) if needed.
 
         iptables -A INPUT -p tcp ! -s $IP --dport $PORT -j DROP
         /tftpboot/iptables_rule script sets iptables rule on the given node.
         """
-        if user_data != '':
+        rule_path = CONF.baremetal.tftp_root + "/iptables_rule"
+        if user_data is not None:
             open_ip = base64.b64decode(user_data)
-            utils.execute('/tftpboot/iptables_rule', node_ip, open_ip)
+            utils.execute(rule_path, node_ip, open_ip)
 
-    def check_activated(self, node_id, node_ip):
-        """
-        Checks whether the given node is activated or not.
-        """
-        LOG.debug(_("Before ping to the bare-metal node"))
-        tile_output = "/tftpboot/tile_output_" + str(node_id)
-        grep_cmd = ("ping -c1 " + node_ip + " | grep Unreachable > " +
-                    tile_output)
-        subprocess.Popen(grep_cmd, shell=True)
-        self.sleep_mgr(5)
+    def activate_node(self, context, node, instance):
+        """Wait for Tilera deployment to complete."""
 
-        file = open(tile_output, "r")
-        out_msg = file.readline().find("Unreachable")
-        utils.execute('sudo', 'rm', tile_output)
-        if out_msg == -1:
-            LOG.debug(_("TILERA_BOARD_#%(node_id)s %(node_ip)s is ready"),
-                      locals())
-            return True
-        else:
-            LOG.debug(_("TILERA_BOARD_#%(node_id)s %(node_ip)s is not ready,"
-                        " out_msg=%(out_msg)s"), locals())
-            self.power_mgr(node_id, 2)
-            return False
-
-    def vmlinux_set(self, node_id, mode):
-        """
-        Sets kernel into default path (/tftpboot) if needed.
-
-        From basepath to /tftpboot, kernel is set based on the given mode
-        such as 0-NoSet, 1-SetVmlinux, or 9-RemoveVmlinux.
-        """
-        LOG.debug(_("Noting to do for tilera nodes: vmlinux is in CF"))
-
-    def sleep_mgr(self, time_in_seconds):
-        """
-        Sleeps until the node is activated.
-        """
-        time.sleep(time_in_seconds)
-
-    def ssh_set(self, node_ip):
-        """
-        Sets and Runs sshd in the node.
-        """
-        cmd = (FLAGS.tile_monitor +
-               " --resume --net " + node_ip + " --run - " +
-               "/usr/sbin/sshd - --wait --quit")
-        subprocess.Popen(cmd, shell=True)
-        self.sleep_mgr(5)
-
-    def activate_node(self, node_id, node_ip, name, mac_address,
-                      ip_address, user_data):
-        """
-        Activates the given node using ID, IP, and MAC address.
-        """
-        LOG.debug(_("activate_node"))
-
-        self.power_mgr(node_id, 2)
-        self.power_mgr(node_id, 3)
-        self.sleep_mgr(100)
+        locals = {'error': '', 'started': False}
 
         try:
-            self.check_activated(node_id, node_ip)
-            self.network_set(node_ip, mac_address, ip_address)
-            self.ssh_set(node_ip)
-            self.iptables_set(node_ip, user_data)
-            return power_state.RUNNING
-        except Exception as ex:
-            self.deactivate_node(node_id)
-            raise exception.NovaException(_("Node is unknown error state."))
+            row = db.bm_node_get(context, node['id'])
+            if instance['uuid'] != row.get('instance_uuid'):
+                locals['error'] = _("Node associated with another instance"
+                                    " while waiting for deploy of %s")
 
-    def get_console_output(self, console_log, node_id):
-        """
-        Gets console output of the given node.
-        """
-        node_ip = self.get_ip_by_id(node_id)
-        log_path = "/tftpboot/log_" + str(node_id)
-        kmsg_cmd = (FLAGS.tile_monitor +
-                    " --resume --net " + node_ip +
-                    " -- dmesg > " + log_path)
-        subprocess.Popen(kmsg_cmd, shell=True)
-        self.sleep_mgr(5)
-        utils.execute('cp', log_path, console_log)
+            status = row.get('task_state')
+            if (status == baremetal_states.DEPLOYING and
+                    locals['started'] == False):
+                LOG.info(_('Tilera deploy started for instance %s')
+                           % instance['uuid'])
+                locals['started'] = True
+            elif status in (baremetal_states.DEPLOYDONE,
+                            baremetal_states.BUILDING,
+                            baremetal_states.ACTIVE):
+                LOG.info(_("Tilera deploy completed for instance %s")
+                           % instance['uuid'])
+                node_ip = node['pm_address']
+                user_data = instance['user_data']
+                try:
+                    self._iptables_set(node_ip, user_data)
+                except Exception:
+                    self.deactivate_bootloader(context, node, instance)
+                    raise exception.NovaException(_("Node is "
+                          "unknown error state."))
+            elif status == baremetal_states.DEPLOYFAIL:
+                locals['error'] = _("Tilera deploy failed for instance %s")
+        except exception.NodeNotFound:
+                locals['error'] = _("Baremetal node deleted while waiting "
+                                "for deployment of instance %s")
 
-    def get_image(self, bp):
-        """
-        Gets the bare-metal file system image into the instance path.
+        if locals['error']:
+            raise exception.InstanceDeployFailure(
+                    locals['error'] % instance['uuid'])
 
-        Noting to do for tilera nodes: actual image is used.
-        """
-        path_fs = "/tftpboot/tilera_fs"
-        path_root = bp + "/root"
-        utils.execute('cp', path_fs, path_root)
-
-    def set_image(self, bpath, node_id):
-        """
-        Sets the PXE bare-metal file system from the instance path.
-
-        This should be done after ssh key is injected.
-        /tftpboot/fs_x directory is a NFS of node#x.
-        /tftpboot/root_x file is an file system image of node#x.
-        """
-        path1 = bpath + "/root"
-        pathx = "/tftpboot/root_" + str(node_id)
-        path2 = "/tftpboot/fs_" + str(node_id)
-        utils.execute('sudo', 'mv', path1, pathx)
-        utils.execute('sudo', 'mount', '-o', 'loop', pathx, path2)
+    def deactivate_node(self, context, node, instance):
+        pass

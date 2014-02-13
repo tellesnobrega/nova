@@ -18,8 +18,14 @@
 
 """Tests for the testing base code."""
 
-from nova.openstack.common import rpc
+from oslo.config import cfg
+from oslo import messaging
+
+from nova import rpc
 from nova import test
+
+CONF = cfg.CONF
+CONF.import_opt('use_local', 'nova.conductor.api', group='conductor')
 
 
 class IsolationTestCase(test.TestCase):
@@ -30,7 +36,8 @@ class IsolationTestCase(test.TestCase):
 
     """
     def test_service_isolation(self):
-        self.start_service('compute')
+        self.flags(use_local=True, group='conductor')
+        self.useFixture(test.ServiceFixture('compute'))
 
     def test_rpc_consumer_isolation(self):
         class NeverCalled(object):
@@ -38,7 +45,7 @@ class IsolationTestCase(test.TestCase):
             def __getattribute__(*args):
                 assert False, "I should never get called."
 
-        connection = rpc.create_connection(new=True)
-        proxy = NeverCalled()
-        connection.create_consumer('compute', proxy, fanout=False)
-        connection.consume_in_thread()
+        server = rpc.get_server(messaging.Target(topic='compute',
+                                                 server=CONF.host),
+                                endpoints=[NeverCalled()])
+        server.start()

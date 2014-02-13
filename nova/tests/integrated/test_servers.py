@@ -15,10 +15,14 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import datetime
 import time
-import unittest
+import zlib
 
-from nova.openstack.common.log import logging
+from nova import context
+from nova.openstack.common import log as logging
+from nova.openstack.common import timeutils
+from nova.tests import fake_network
 from nova.tests.integrated.api import client
 from nova.tests.integrated import integrated_helpers
 import nova.virt.fake
@@ -28,6 +32,19 @@ LOG = logging.getLogger(__name__)
 
 
 class ServersTest(integrated_helpers._IntegratedTestBase):
+    _api_version = 'v2'
+    _force_delete_parameter = 'forceDelete'
+    _image_ref_parameter = 'imageRef'
+    _flavor_ref_parameter = 'flavorRef'
+    _access_ipv4_parameter = 'accessIPv4'
+    _access_ipv6_parameter = 'accessIPv6'
+    _return_resv_id_parameter = 'return_reservation_id'
+    _min_count_parameter = 'min_count'
+
+    def setUp(self):
+        super(ServersTest, self).setUp()
+        self.conductor = self.start_service(
+            'conductor', manager='nova.conductor.manager.ConductorManager')
 
     def _wait_for_state_change(self, server, from_status):
         for i in xrange(0, 50):
@@ -44,14 +61,14 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         self.compute = self.start_service('compute', *args, **kwargs)
 
     def test_get_servers(self):
-        """Simple check that listing servers works."""
+        # Simple check that listing servers works.
         servers = self.api.get_servers()
         for server in servers:
             LOG.debug("server: %s" % server)
 
     def test_create_server_with_error(self):
-        """Create a server which will enter error state."""
-        self.flags(stub_network=True)
+        # Create a server which will enter error state.
+        fake_network.set_stub_network_methods(self.stubs)
 
         def throw_error(*_):
             raise Exception()
@@ -71,8 +88,8 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         self._delete_server(created_server_id)
 
     def test_create_and_delete_server(self):
-        """Creates and deletes a server."""
-        self.flags(stub_network=True)
+        # Creates and deletes a server.
+        fake_network.set_stub_network_methods(self.stubs)
 
         # Create server
         # Build the server data gradually, checking errors along the way
@@ -87,20 +104,22 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
                           self.api.post_server, post)
 
         # With an invalid imageRef, this throws 500.
-        server['imageRef'] = self.get_invalid_image()
+        server[self._image_ref_parameter] = self.get_invalid_image()
         # TODO(justinsb): Check whatever the spec says should be thrown here
         self.assertRaises(client.OpenStackApiException,
                           self.api.post_server, post)
 
         # Add a valid imageRef
-        server['imageRef'] = good_server.get('imageRef')
+        server[self._image_ref_parameter] = good_server.get(
+            self._image_ref_parameter)
 
         # Without flavorRef, this throws 500
         # TODO(justinsb): Check whatever the spec says should be thrown here
         self.assertRaises(client.OpenStackApiException,
                           self.api.post_server, post)
 
-        server['flavorRef'] = good_server.get('flavorRef')
+        server[self._flavor_ref_parameter] = good_server.get(
+            self._flavor_ref_parameter)
 
         # Without a name, this throws 500
         # TODO(justinsb): Check whatever the spec says should be thrown here
@@ -121,8 +140,8 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
 
         # It should also be in the all-servers list
         servers = self.api.get_servers()
-        server_ids = [server['id'] for server in servers]
-        self.assertTrue(created_server_id in server_ids)
+        server_ids = [s['id'] for s in servers]
+        self.assertIn(created_server_id, server_ids)
 
         found_server = self._wait_for_state_change(found_server, 'BUILD')
         # It should be available...
@@ -130,18 +149,23 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         self.assertEqual('ACTIVE', found_server['status'])
         servers = self.api.get_servers(detail=True)
         for server in servers:
-            self.assertTrue("image" in server)
-            self.assertTrue("flavor" in server)
+            self.assertIn("image", server)
+            self.assertIn("flavor", server)
 
         self._delete_server(created_server_id)
 
-    def test_deferred_delete(self):
-        """Creates, deletes and waits for server to be reclaimed."""
-        self.flags(stub_network=True, reclaim_instance_interval=1)
+    def _force_reclaim(self):
+        # Make sure that compute manager thinks the instance is
+        # old enough to be expired
+        the_past = timeutils.utcnow() + datetime.timedelta(hours=1)
+        timeutils.set_time_override(override_time=the_past)
+        ctxt = context.get_admin_context()
+        self.compute._reclaim_queued_deletes(ctxt)
 
-        # enforce periodic tasks run in short time to avoid wait for 60s.
-        self._restart_compute_service(
-                periodic_interval=0.3, periodic_fuzzy_delay=0)
+    def test_deferred_delete(self):
+        # Creates, deletes and waits for server to be reclaimed.
+        self.flags(reclaim_instance_interval=1)
+        fake_network.set_stub_network_methods(self.stubs)
 
         # Create server
         server = self._build_minimal_create_server_request()
@@ -172,14 +196,17 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
 
         # Wait for queued deletion
         found_server = self._wait_for_state_change(found_server, 'ACTIVE')
-        self.assertEqual('DELETED', found_server['status'])
+        self.assertEqual('SOFT_DELETED', found_server['status'])
+
+        self._force_reclaim()
 
         # Wait for real deletion
         self._wait_for_deletion(created_server_id)
 
     def test_deferred_delete_restore(self):
-        """Creates, deletes and restores a server."""
-        self.flags(stub_network=True, reclaim_instance_interval=1)
+        # Creates, deletes and restores a server.
+        self.flags(reclaim_instance_interval=3600)
+        fake_network.set_stub_network_methods(self.stubs)
 
         # Create server
         server = self._build_minimal_create_server_request()
@@ -200,7 +227,7 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
 
         # Wait for queued deletion
         found_server = self._wait_for_state_change(found_server, 'ACTIVE')
-        self.assertEqual('DELETED', found_server['status'])
+        self.assertEqual('SOFT_DELETED', found_server['status'])
 
         # Restore server
         self.api.post_server_action(created_server_id, {'restore': {}})
@@ -210,8 +237,9 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         self.assertEqual('ACTIVE', found_server['status'])
 
     def test_deferred_delete_force(self):
-        """Creates, deletes and force deletes a server."""
-        self.flags(stub_network=True, reclaim_instance_interval=1)
+        # Creates, deletes and force deletes a server.
+        self.flags(reclaim_instance_interval=3600)
+        fake_network.set_stub_network_methods(self.stubs)
 
         # Create server
         server = self._build_minimal_create_server_request()
@@ -232,10 +260,11 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
 
         # Wait for queued deletion
         found_server = self._wait_for_state_change(found_server, 'ACTIVE')
-        self.assertEqual('DELETED', found_server['status'])
+        self.assertEqual('SOFT_DELETED', found_server['status'])
 
         # Force delete server
-        self.api.post_server_action(created_server_id, {'forceDelete': {}})
+        self.api.post_server_action(created_server_id,
+                                    {self._force_delete_parameter: {}})
 
         # Wait for real deletion
         self._wait_for_deletion(created_server_id)
@@ -266,8 +295,8 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         self._wait_for_deletion(server_id)
 
     def test_create_server_with_metadata(self):
-        """Creates a server with metadata."""
-        self.flags(stub_network=True)
+        # Creates a server with metadata.
+        fake_network.set_stub_network_methods(self.stubs)
 
         # Build the server data gradually, checking errors along the way
         server = self._build_minimal_create_server_request()
@@ -308,8 +337,8 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         self._delete_server(created_server_id)
 
     def test_create_and_rebuild_server(self):
-        """Rebuild a server with metadata."""
-        self.flags(stub_network=True)
+        # Rebuild a server with metadata.
+        fake_network.set_stub_network_methods(self.stubs)
 
         # create a server with initially has no metadata
         server = self._build_minimal_create_server_request()
@@ -331,12 +360,13 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         # rebuild the server with metadata and other server attributes
         post = {}
         post['rebuild'] = {
-            "imageRef": "76fa36fc-c930-4bf3-8c8a-ea2a2420deb6",
+            self._image_ref_parameter: "76fa36fc-c930-4bf3-8c8a-ea2a2420deb6",
             "name": "blah",
-            "accessIPv4": "172.19.0.2",
-            "accessIPv6": "fe80::2",
+            self._access_ipv4_parameter: "172.19.0.2",
+            self._access_ipv6_parameter: "fe80::2",
             "metadata": {'some': 'thing'},
         }
+        post['rebuild'].update(self._get_access_ips_params())
 
         self.api.post_server_action(created_server_id, post)
         LOG.debug("rebuilt server: %s" % created_server)
@@ -346,15 +376,14 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         self.assertEqual(created_server_id, found_server['id'])
         self.assertEqual({'some': 'thing'}, found_server.get('metadata'))
         self.assertEqual('blah', found_server.get('name'))
-        self.assertEqual(post['rebuild']['imageRef'],
+        self.assertEqual(post['rebuild'][self._image_ref_parameter],
                          found_server.get('image')['id'])
-        self.assertEqual('172.19.0.2', found_server['accessIPv4'])
-        self.assertEqual('fe80::2', found_server['accessIPv6'])
+        self._verify_access_ips(found_server)
 
         # rebuild the server with empty metadata and nothing else
         post = {}
         post['rebuild'] = {
-            "imageRef": "76fa36fc-c930-4bf3-8c8a-ea2a2420deb6",
+            self._image_ref_parameter: "76fa36fc-c930-4bf3-8c8a-ea2a2420deb6",
             "metadata": {},
         }
 
@@ -366,17 +395,25 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         self.assertEqual(created_server_id, found_server['id'])
         self.assertEqual({}, found_server.get('metadata'))
         self.assertEqual('blah', found_server.get('name'))
-        self.assertEqual(post['rebuild']['imageRef'],
+        self.assertEqual(post['rebuild'][self._image_ref_parameter],
                          found_server.get('image')['id'])
-        self.assertEqual('172.19.0.2', found_server['accessIPv4'])
-        self.assertEqual('fe80::2', found_server['accessIPv6'])
+        self._verify_access_ips(found_server)
 
         # Cleanup
         self._delete_server(created_server_id)
 
+    def _get_access_ips_params(self):
+        return {self._access_ipv4_parameter: "172.19.0.2",
+                self._access_ipv6_parameter: "fe80::2"}
+
+    def _verify_access_ips(self, server):
+        self.assertEqual('172.19.0.2',
+                         server[self._access_ipv4_parameter])
+        self.assertEqual('fe80::2', server[self._access_ipv6_parameter])
+
     def test_rename_server(self):
-        """Test building and renaming a server."""
-        self.flags(stub_network=True)
+        # Test building and renaming a server.
+        fake_network.set_stub_network_methods(self.stubs)
 
         # Create a server
         server = self._build_minimal_create_server_request()
@@ -396,13 +433,13 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         self._delete_server(server_id)
 
     def test_create_multiple_servers(self):
-        """Creates multiple servers and checks for reservation_id"""
+        # Creates multiple servers and checks for reservation_id.
 
         # Create 2 servers, setting 'return_reservation_id, which should
         # return a reservation_id
         server = self._build_minimal_create_server_request()
-        server['min_count'] = 2
-        server['return_reservation_id'] = True
+        server[self._min_count_parameter] = 2
+        server[self._return_resv_id_parameter] = True
         post = {'server': server}
         response = self.api.post_server(post)
         self.assertIn('reservation_id', response)
@@ -422,7 +459,7 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         server_map = dict((server['id'], server) for server in servers)
         found_server = server_map.get(created_server_id)
         # The server from the 2nd request should not be there.
-        self.assertEqual(found_server, None)
+        self.assertIsNone(found_server)
         # Should have found 2 servers.
         self.assertEqual(len(server_map), 2)
 
@@ -431,6 +468,61 @@ class ServersTest(integrated_helpers._IntegratedTestBase):
         for server_id in server_map.iterkeys():
             self._delete_server(server_id)
 
+    def test_create_server_with_injected_files(self):
+        # Creates a server with injected_files.
+        fake_network.set_stub_network_methods(self.stubs)
+        personality = []
 
-if __name__ == "__main__":
-    unittest.main()
+        # Inject a text file
+        data = 'Hello, World!'
+        personality.append({
+            'path': '/helloworld.txt',
+            'contents': data.encode('base64'),
+        })
+
+        # Inject a binary file
+        data = zlib.compress('Hello, World!')
+        personality.append({
+            'path': '/helloworld.zip',
+            'contents': data.encode('base64'),
+        })
+
+        # Create server
+        server = self._build_minimal_create_server_request()
+        server['personality'] = personality
+
+        post = {'server': server}
+
+        created_server = self.api.post_server(post)
+        LOG.debug("created_server: %s" % created_server)
+        self.assertTrue(created_server['id'])
+        created_server_id = created_server['id']
+
+        # Check it's there
+        found_server = self.api.get_server(created_server_id)
+        self.assertEqual(created_server_id, found_server['id'])
+
+        found_server = self._wait_for_state_change(found_server, 'BUILD')
+        self.assertEqual('ACTIVE', found_server['status'])
+
+        # Cleanup
+        self._delete_server(created_server_id)
+
+
+class ServersTestV3(client.TestOpenStackClientV3Mixin, ServersTest):
+    _force_delete_parameter = 'force_delete'
+    _api_version = 'v3'
+    _image_ref_parameter = 'image_ref'
+    _flavor_ref_parameter = 'flavor_ref'
+    _return_resv_id_parameter = 'os-multiple-create:return_reservation_id'
+    _min_count_parameter = 'os-multiple-create:min_count'
+    _access_ipv4_parameter = None
+    _access_ipv6_parameter = None
+
+    def _get_access_ips_params(self):
+        return {}
+
+    def _verify_access_ips(self, server):
+        # NOTE(alexxu): access_ips was demoted as extensions in v3 api.
+        # So skips verifying access_ips
+        pass

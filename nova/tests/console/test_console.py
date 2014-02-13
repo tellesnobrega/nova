@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2010 OpenStack, LLC.
+# Copyright (c) 2010 OpenStack Foundation
 # Administrator of the National Aeronautics and Space Administration.
 # All Rights Reserved.
 #
@@ -18,37 +18,41 @@
 
 """Tests For Console proxy."""
 
+from oslo.config import cfg
+
+from nova.compute import rpcapi as compute_rpcapi
+from nova.console import api as console_api
+from nova.console import rpcapi as console_rpcapi
 from nova import context
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import importutils
 from nova import test
 
-FLAGS = flags.FLAGS
-flags.DECLARE('console_driver', 'nova.console.manager')
+CONF = cfg.CONF
+CONF.import_opt('console_manager', 'nova.service')
+CONF.import_opt('console_driver', 'nova.console.manager')
 
 
 class ConsoleTestCase(test.TestCase):
-    """Test case for console proxy"""
+    """Test case for console proxy manager."""
     def setUp(self):
         super(ConsoleTestCase, self).setUp()
         self.flags(console_driver='nova.console.fake.FakeConsoleProxy',
                    stub_compute=True)
-        self.console = importutils.import_object(FLAGS.console_manager)
+        self.console = importutils.import_object(CONF.console_manager)
         self.user_id = 'fake'
         self.project_id = 'fake'
         self.context = context.RequestContext(self.user_id, self.project_id)
         self.host = 'test_compute_host'
 
     def _create_instance(self):
-        """Create a test instance"""
+        """Create a test instance."""
         inst = {}
         #inst['host'] = self.host
         #inst['name'] = 'instance-1234'
         inst['image_id'] = 1
         inst['reservation_id'] = 'r-fakeres'
-        inst['launch_time'] = '10'
         inst['user_id'] = self.user_id
         inst['project_id'] = self.project_id
         inst['instance_type_id'] = 1
@@ -56,7 +60,7 @@ class ConsoleTestCase(test.TestCase):
         return db.instance_create(self.context, inst)
 
     def test_get_pool_for_instance_host(self):
-        pool = self.console.get_pool_for_instance_host(self.context,
+        pool = self.console._get_pool_for_instance_host(self.context,
                 self.host)
         self.assertEqual(pool['compute_host'], self.host)
 
@@ -67,7 +71,7 @@ class ConsoleTestCase(test.TestCase):
                           self.host,
                           self.console.host,
                           self.console.driver.console_type)
-        pool = self.console.get_pool_for_instance_host(self.context,
+        pool = self.console._get_pool_for_instance_host(self.context,
                                                            self.host)
         pool2 = db.console_pool_get_by_host_type(self.context,
                               self.host,
@@ -83,7 +87,7 @@ class ConsoleTestCase(test.TestCase):
                      'console_type': self.console.driver.console_type,
                      'compute_host': 'sometesthostname'}
         new_pool = db.console_pool_create(self.context, pool_info)
-        pool = self.console.get_pool_for_instance_host(self.context,
+        pool = self.console._get_pool_for_instance_host(self.context,
                                                        'sometesthostname')
         self.assertEqual(pool['id'], new_pool['id'])
 
@@ -95,8 +99,8 @@ class ConsoleTestCase(test.TestCase):
                 instance['host'], self.console.host,
                 self.console.driver.console_type)
 
-        console_instances = [con['instance_uuid'] for con in pool.consoles]
-        self.assert_(instance['uuid'] in console_instances)
+        console_instances = [con['instance_uuid'] for con in pool['consoles']]
+        self.assertIn(instance['uuid'], console_instances)
         db.instance_destroy(self.context, instance['uuid'])
 
     def test_add_console_does_not_duplicate(self):
@@ -116,3 +120,71 @@ class ConsoleTestCase(test.TestCase):
                           self.context,
                           console_id)
         db.instance_destroy(self.context, instance['uuid'])
+
+
+class ConsoleAPITestCase(test.TestCase):
+    """Test case for console API."""
+    def setUp(self):
+        super(ConsoleAPITestCase, self).setUp()
+
+        self.context = context.RequestContext('fake', 'fake')
+        self.console_api = console_api.API()
+        self.fake_uuid = '00000000-aaaa-bbbb-cccc-000000000000'
+        self.fake_instance = {
+            'id': 1,
+            'uuid': self.fake_uuid,
+            'host': 'fake_host'
+        }
+        self.fake_console = {
+            'pool': {'host': 'fake_host'},
+            'id': 'fake_id'
+        }
+
+        def _fake_db_console_get(_ctxt, _console_uuid, _instance_uuid):
+            return self.fake_console
+        self.stubs.Set(db, 'console_get', _fake_db_console_get)
+
+        def _fake_db_console_get_all_by_instance(_ctxt, _instance_uuid,
+                                                 columns_to_join):
+            return [self.fake_console]
+        self.stubs.Set(db, 'console_get_all_by_instance',
+                       _fake_db_console_get_all_by_instance)
+
+        def _fake_instance_get_by_uuid(_ctxt, _instance_uuid):
+            return self.fake_instance
+        self.stubs.Set(db, 'instance_get_by_uuid', _fake_instance_get_by_uuid)
+
+    def test_get_consoles(self):
+        console = self.console_api.get_consoles(self.context, self.fake_uuid)
+        self.assertEqual(console, [self.fake_console])
+
+    def test_get_console(self):
+        console = self.console_api.get_console(self.context, self.fake_uuid,
+                                               'fake_id')
+        self.assertEqual(console, self.fake_console)
+
+    def test_delete_console(self):
+        self.mox.StubOutWithMock(console_rpcapi.ConsoleAPI, 'remove_console')
+
+        console_rpcapi.ConsoleAPI.remove_console(self.context, 'fake_id')
+
+        self.mox.ReplayAll()
+
+        self.console_api.delete_console(self.context, self.fake_uuid,
+                                        'fake_id')
+
+    def test_create_console(self):
+        self.mox.StubOutWithMock(compute_rpcapi.ComputeAPI,
+                                 'get_console_topic')
+
+        compute_rpcapi.ComputeAPI.get_console_topic(
+            self.context, 'fake_host').AndReturn('compute.fake_host')
+        self.mox.StubOutClassWithMocks(console_rpcapi, 'ConsoleAPI')
+        console_api_mock = console_rpcapi.ConsoleAPI(
+            topic='compute', server='fake_host')
+        console_api_mock.add_console(self.context,
+                                     self.fake_instance['id'])
+
+        self.mox.ReplayAll()
+
+        self.console_api.create_console(self.context, self.fake_uuid)

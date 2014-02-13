@@ -1,4 +1,4 @@
-# Copyright 2012 OpenStack LLC.
+# Copyright 2012 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -18,9 +18,12 @@ import webob
 from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
+import nova.context
 from nova import db
 from nova import exception
+from nova.openstack.common.gettextutils import _
 from nova import quota
+from nova import utils
 
 
 QUOTAS = quota.QUOTAS
@@ -42,10 +45,10 @@ class QuotaClassTemplate(xmlutil.TemplateBuilder):
         return xmlutil.MasterTemplate(root, 1)
 
 
-class QuotaClassSetsController(object):
+class QuotaClassSetsController(wsgi.Controller):
 
     def _format_quota_set(self, quota_class, quota_set):
-        """Convert the quota object to a result dict"""
+        """Convert the quota object to a result dict."""
 
         result = dict(id=str(quota_class))
 
@@ -59,7 +62,7 @@ class QuotaClassSetsController(object):
         context = req.environ['nova.context']
         authorize(context)
         try:
-            db.sqlalchemy.api.authorize_quota_class_context(context, id)
+            nova.context.authorize_quota_class_context(context, id)
             return self._format_quota_set(id,
                                           QUOTAS.get_class_quotas(context, id))
         except exception.NotAuthorized:
@@ -70,9 +73,19 @@ class QuotaClassSetsController(object):
         context = req.environ['nova.context']
         authorize(context)
         quota_class = id
-        for key in body['quota_class_set'].keys():
+
+        if not self.is_valid_body(body, 'quota_class_set'):
+            msg = _("quota_class_set not specified")
+            raise webob.exc.HTTPBadRequest(explanation=msg)
+        quota_class_set = body['quota_class_set']
+        for key in quota_class_set.keys():
             if key in QUOTAS:
-                value = int(body['quota_class_set'][key])
+                try:
+                    value = utils.validate_integer(
+                        body['quota_class_set'][key], key)
+                except exception.InvalidInput as e:
+                    raise webob.exc.HTTPBadRequest(
+                        explanation=e.format_message())
                 try:
                     db.quota_class_update(context, quota_class, key, value)
                 except exception.QuotaClassNotFound:
@@ -84,7 +97,7 @@ class QuotaClassSetsController(object):
 
 
 class Quota_classes(extensions.ExtensionDescriptor):
-    """Quota classes management support"""
+    """Quota classes management support."""
 
     name = "QuotaClasses"
     alias = "os-quota-class-sets"

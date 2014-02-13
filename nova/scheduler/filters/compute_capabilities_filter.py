@@ -1,4 +1,4 @@
-# Copyright (c) 2011 OpenStack, LLC.
+# Copyright (c) 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -12,10 +12,11 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-import operator
 
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 from nova.scheduler import filters
+from nova.scheduler.filters import extra_specs_ops
 
 
 LOG = logging.getLogger(__name__)
@@ -24,59 +25,51 @@ LOG = logging.getLogger(__name__)
 class ComputeCapabilitiesFilter(filters.BaseHostFilter):
     """HostFilter hard-coded to work with InstanceType records."""
 
-    def _satisfies_extra_specs(self, capabilities, instance_type):
-        """Check that the capabilities provided by the compute service
-        satisfy the extra specs associated with the instance type"""
+    # Instance type and host capabilities do not change within a request
+    run_filter_once_per_request = True
+
+    def _satisfies_extra_specs(self, host_state, instance_type):
+        """Check that the host_state provided by the compute service
+        satisfy the extra specs associated with the instance type.
+        """
         if 'extra_specs' not in instance_type:
             return True
 
-        # 1. The following operations are supported:
-        #   =, s==, s!=, s>=, s>, s<=, s<, <in>, <or>, ==, !=, >=, <=
-        # 2. Note that <or> is handled in a different way below.
-        # 3. If the first word in the capability is not one of the operators,
-        #   it is ignored.
-        op_methods = {'=': lambda x, y: float(x) >= float(y),
-                      '<in>': lambda x, y: y in x,
-                      '==': lambda x, y: float(x) == float(y),
-                      '!=': lambda x, y: float(x) != float(y),
-                      '>=': lambda x, y: float(x) >= float(y),
-                      '<=': lambda x, y: float(x) <= float(y),
-                      's==': operator.eq,
-                      's!=': operator.ne,
-                      's<': operator.lt,
-                      's<=': operator.le,
-                      's>': operator.gt,
-                      's>=': operator.ge}
-
         for key, req in instance_type['extra_specs'].iteritems():
-            words = req.split()
-            if words:
-                op = words[0]
-                method = op_methods.get(op)
-
-                if (op == '<or>' or method):
-                    cap = capabilities.get(key, None)
-                    if cap is None:
-                        return False
-                    if op == '<or>':  # Ex: <or> v1 <or> v2 <or> v3
-                        for idx in range(1, len(words), 2):
-                            if words[idx] == cap:
-                                break
+            # Either not scope format, or in capabilities scope
+            scope = key.split(':')
+            if len(scope) > 1:
+                if scope[0] != "capabilities":
+                    continue
+                else:
+                    del scope[0]
+            cap = host_state
+            for index in range(0, len(scope)):
+                try:
+                    if not isinstance(cap, dict):
+                        if getattr(cap, scope[index], None) is None:
+                            # If can't find, check stats dict
+                            cap = cap.stats.get(scope[index], None)
                         else:
-                            return False
-                    else:  # method
-                        if len(words) == 1:
-                            return False
-                        if not method(cap, words[1]):
-                            return False
+                            cap = getattr(cap, scope[index], None)
+                    else:
+                        cap = cap.get(scope[index], None)
+                except AttributeError:
+                    return False
+                if cap is None:
+                    return False
+            if not extra_specs_ops.match(str(cap), req):
+                LOG.debug(_("extra_spec requirement '%(req)s' does not match "
+                    "'%(cap)s'"), {'req': req, 'cap': cap})
+                return False
         return True
 
     def host_passes(self, host_state, filter_properties):
         """Return a list of hosts that can create instance_type."""
         instance_type = filter_properties.get('instance_type')
-        if not self._satisfies_extra_specs(host_state.capabilities,
+        if not self._satisfies_extra_specs(host_state,
                 instance_type):
             LOG.debug(_("%(host_state)s fails instance_type extra_specs "
-                    "requirements"), locals())
+                    "requirements"), {'host_state': host_state})
             return False
         return True

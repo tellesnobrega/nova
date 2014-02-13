@@ -1,6 +1,9 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
-
-# Copyright (c) 2011 University of Southern California
+# coding=utf-8
+#
+# Copyright (c) 2012 NTT DOCOMO, INC
+# Copyright (c) 2011 University of Southern California / ISI
+# All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -13,749 +16,556 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-#
-"""
-A connection to a hypervisor through baremetal.
-
-**Related Flags**
-
-:baremetal_type:  Baremetal domain type.
-:baremetal_uri:  Override for the default baremetal URI (baremetal_type).
-:rescue_image_id:  Rescue ami image (default: ami-rescue).
-:rescue_kernel_id:  Rescue aki image (default: aki-rescue).
-:rescue_ramdisk_id:  Rescue ari image (default: ari-rescue).
-:injected_network_template:  Template file for injected network
-:allow_project_net_traffic:  Whether to allow in project network traffic
 
 """
+A driver for Bare-metal platform.
+"""
 
-import hashlib
-import os
-import shutil
+from oslo.config import cfg
 
-from nova.compute import instance_types
+from nova.compute import flavors
 from nova.compute import power_state
-from nova.compute import vm_states
+from nova.compute import task_states
 from nova import context as nova_context
-from nova import db
 from nova import exception
-from nova import flags
-from nova import notifications
-from nova.openstack.common import cfg
+from nova.openstack.common import excutils
+from nova.openstack.common.gettextutils import _
+from nova.openstack.common import importutils
+from nova.openstack.common import jsonutils
 from nova.openstack.common import log as logging
-from nova import utils
-from nova.virt.baremetal import dom
-from nova.virt.baremetal import nodes
-from nova.virt.disk import api as disk
+from nova.virt.baremetal import baremetal_states
+from nova.virt.baremetal import db
 from nova.virt import driver
-from nova.virt.libvirt import utils as libvirt_utils
-
-
-Template = None
+from nova.virt import firewall
+from nova.virt.libvirt import imagecache
 
 LOG = logging.getLogger(__name__)
 
-FLAGS = flags.FLAGS
-
-baremetal_opts = [
-    cfg.StrOpt('baremetal_type',
-                default='baremetal',
-                help='baremetal domain type'),
+opts = [
+    cfg.StrOpt('vif_driver',
+               default='nova.virt.baremetal.vif_driver.BareMetalVIFDriver',
+               help='Baremetal VIF driver.'),
+    cfg.StrOpt('volume_driver',
+               default='nova.virt.baremetal.volume_driver.LibvirtVolumeDriver',
+               help='Baremetal volume driver.'),
+    cfg.ListOpt('flavor_extra_specs',
+               default=[],
+               help='A list of additional capabilities corresponding to '
+               'flavor_extra_specs for this compute '
+               'host to advertise. Valid entries are name=value, pairs '
+               'For example, "key1:val1, key2:val2"',
+               deprecated_name='instance_type_extra_specs'),
+    cfg.StrOpt('driver',
+               default='nova.virt.baremetal.pxe.PXE',
+               help='Baremetal driver back-end (pxe or tilera)'),
+    cfg.StrOpt('power_manager',
+               default='nova.virt.baremetal.ipmi.IPMI',
+               help='Baremetal power management method'),
+    cfg.StrOpt('tftp_root',
+               default='/tftpboot',
+               help='Baremetal compute node\'s tftp root path'),
     ]
 
-FLAGS.register_opts(baremetal_opts)
+baremetal_group = cfg.OptGroup(name='baremetal',
+                               title='Baremetal Options')
+
+CONF = cfg.CONF
+CONF.register_group(baremetal_group)
+CONF.register_opts(opts, baremetal_group)
+CONF.import_opt('host', 'nova.netconf')
+CONF.import_opt('my_ip', 'nova.netconf')
+
+DEFAULT_FIREWALL_DRIVER = "%s.%s" % (
+    firewall.__name__,
+    firewall.NoopFirewallDriver.__name__)
 
 
-def _late_load_cheetah():
-    global Template
-    if Template is None:
-        t = __import__('Cheetah.Template', globals(), locals(),
-                       ['Template'], -1)
-        Template = t.Template
+def _get_baremetal_node_by_instance_uuid(instance_uuid):
+    ctx = nova_context.get_admin_context()
+    node = db.bm_node_get_by_instance_uuid(ctx, instance_uuid)
+    if node['service_host'] != CONF.host:
+        LOG.error(_("Request for baremetal node %s "
+                    "sent to wrong service host") % instance_uuid)
+        raise exception.InstanceNotFound(instance_id=instance_uuid)
+    return node
+
+
+def _update_state(context, node, instance, state):
+    """Update the node state in baremetal DB
+
+    If instance is not supplied, reset the instance_uuid field for this node.
+
+    """
+    values = {'task_state': state}
+    if not instance:
+        values['instance_uuid'] = None
+        values['instance_name'] = None
+    db.bm_node_update(context, node['id'], values)
+
+
+def get_power_manager(**kwargs):
+    cls = importutils.import_class(CONF.baremetal.power_manager)
+    return cls(**kwargs)
 
 
 class BareMetalDriver(driver.ComputeDriver):
+    """BareMetal hypervisor driver."""
 
-    def __init__(self, read_only):
-        _late_load_cheetah()
-        # Note that baremetal doesn't have a read-only connection
-        # mode, so the read_only parameter is ignored
-        super(BareMetalDriver, self).__init__()
-        self.baremetal_nodes = nodes.get_baremetal_nodes()
-        self._wrapped_conn = None
-        self._host_state = None
+    capabilities = {
+        "has_imagecache": True,
+        "supports_recreate": False,
+        }
 
-    @property
-    def HostState(self):
-        if not self._host_state:
-            self._host_state = HostState(self)
-        return self._host_state
+    def __init__(self, virtapi, read_only=False):
+        super(BareMetalDriver, self).__init__(virtapi)
+
+        self.driver = importutils.import_object(
+                CONF.baremetal.driver, virtapi)
+        self.vif_driver = importutils.import_object(
+                CONF.baremetal.vif_driver)
+        self.firewall_driver = firewall.load_driver(
+                default=DEFAULT_FIREWALL_DRIVER)
+        self.volume_driver = importutils.import_object(
+                CONF.baremetal.volume_driver, virtapi)
+        self.image_cache_manager = imagecache.ImageCacheManager()
+
+        extra_specs = {}
+        extra_specs["baremetal_driver"] = CONF.baremetal.driver
+        for pair in CONF.baremetal.flavor_extra_specs:
+            keyval = pair.split(':', 1)
+            keyval[0] = keyval[0].strip()
+            keyval[1] = keyval[1].strip()
+            extra_specs[keyval[0]] = keyval[1]
+        if 'cpu_arch' not in extra_specs:
+            LOG.warning(
+                    _('cpu_arch is not found in flavor_extra_specs'))
+            extra_specs['cpu_arch'] = ''
+        self.extra_specs = extra_specs
+
+        self.supported_instances = [
+                (extra_specs['cpu_arch'], 'baremetal', 'baremetal'),
+                ]
+
+    @classmethod
+    def instance(cls):
+        if not hasattr(cls, '_instance'):
+            cls._instance = cls()
+        return cls._instance
 
     def init_host(self, host):
-        pass
-
-    def _get_connection(self):
-        self._wrapped_conn = dom.BareMetalDom()
-        return self._wrapped_conn
-    _conn = property(_get_connection)
-
-    def get_pty_for_instance(self, instance_name):
-        raise NotImplementedError()
-
-    def list_instances(self):
-        return self._conn.list_domains()
-
-    def destroy(self, instance, network_info, block_device_info=None,
-                cleanup=True):
-        while True:
-            try:
-                self._conn.destroy_domain(instance['name'])
-                break
-            except Exception as ex:
-                LOG.debug(_("Error encountered when destroying instance "
-                            "'%(name)s': %(ex)s") %
-                          {"name": instance["name"], "ex": ex},
-                          instance=instance)
-                break
-
-        if cleanup:
-            self._cleanup(instance)
-
-        return True
-
-    def _cleanup(self, instance):
-        target = os.path.join(FLAGS.instances_path, instance['name'])
-        instance_name = instance['name']
-        LOG.info(_('instance %(instance_name)s: deleting instance files'
-                ' %(target)s') % locals(), instance=instance)
-        if FLAGS.baremetal_type == 'lxc':
-            disk.destroy_container(self.container)
-        if os.path.exists(target):
-            shutil.rmtree(target)
-
-    @exception.wrap_exception
-    def attach_volume(self, instance_name, device_path, mountpoint):
-        raise exception.Invalid("attach_volume not supported for baremetal.")
-
-    @exception.wrap_exception
-    def detach_volume(self, instance_name, mountpoint):
-        raise exception.Invalid("detach_volume not supported for baremetal.")
-
-    @exception.wrap_exception
-    def snapshot(self, instance, image_id):
-        raise exception.Invalid("snapshot not supported for baremetal.")
-
-    @exception.wrap_exception
-    def reboot(self, instance):
-        timer = utils.LoopingCall(f=None)
-
-        def _wait_for_reboot():
-            try:
-                state = self._conn.reboot_domain(instance['name'])
-                if state == power_state.RUNNING:
-                    LOG.debug(_('instance %s: rebooted'), instance['name'],
-                              instance=instance)
-                    timer.stop()
-            except Exception:
-                LOG.exception(_('_wait_for_reboot failed'), instance=instance)
-                timer.stop()
-        timer.f = _wait_for_reboot
-        return timer.start(interval=0.5).wait()
-
-    @exception.wrap_exception
-    def rescue(self, context, instance, network_info, rescue_password):
-        """Loads a VM using rescue images.
-
-        A rescue is normally performed when something goes wrong with the
-        primary images and data needs to be corrected/recovered. Rescuing
-        should not edit or over-ride the original image, only allow for
-        data recovery.
-
-        """
-        self.destroy(instance, False)
-
-        rescue_images = {'image_id': FLAGS.baremetal_rescue_image_id,
-                         'kernel_id': FLAGS.baremetal_rescue_kernel_id,
-                         'ramdisk_id': FLAGS.baremetal_rescue_ramdisk_id}
-        self._create_image(instance, '.rescue', rescue_images,
-                           network_info=network_info)
-
-        timer = utils.LoopingCall(f=None)
-
-        def _wait_for_rescue():
-            try:
-                state = self._conn.reboot_domain(instance['name'])
-                if state == power_state.RUNNING:
-                    LOG.debug(_('instance %s: rescued'), instance['name'],
-                              instance=instance)
-                    timer.stop()
-            except Exception:
-                LOG.exception(_('_wait_for_rescue failed'), instance=instance)
-                timer.stop()
-        timer.f = _wait_for_rescue
-        return timer.start(interval=0.5).wait()
-
-    @exception.wrap_exception
-    def unrescue(self, instance, network_info):
-        """Reboot the VM which is being rescued back into primary images.
-
-        Because reboot destroys and re-creates instances, unresue should
-        simply call reboot.
-
-        """
-        self.reboot(instance)
-
-    def spawn(self, context, instance, image_meta, injected_files,
-              admin_password, network_info, block_device_info=None):
-        LOG.debug(_("<============= spawn of baremetal =============>"))
-
-        def basepath(fname='', suffix=''):
-            return os.path.join(FLAGS.instances_path,
-                                instance['name'],
-                                fname + suffix)
-        bpath = basepath(suffix='')
-        timer = utils.LoopingCall(f=None)
-
-        xml_dict = self.to_xml_dict(instance, network_info)
-        self._create_image(context, instance, xml_dict,
-            network_info=network_info,
-            block_device_info=block_device_info)
-        LOG.debug(_("instance %s: is building"), instance['name'],
-                  instance=instance)
-        LOG.debug(xml_dict, instance=instance)
-
-        def _wait_for_boot():
-            try:
-                LOG.debug(_("Key is injected but instance is not running yet"),
-                          instance=instance)
-                (old_ref, new_ref) = db.instance_update_and_get_original(
-                        context, instance['uuid'],
-                        {'vm_state': vm_states.BUILDING})
-                notifications.send_update(context, old_ref, new_ref)
-
-                state = self._conn.create_domain(xml_dict, bpath)
-                if state == power_state.RUNNING:
-                    LOG.debug(_('instance %s: booted'), instance['name'],
-                              instance=instance)
-                    (old_ref, new_ref) = db.instance_update_and_get_original(
-                            context, instance['uuid'],
-                            {'vm_state': vm_states.ACTIVE})
-                    notifications.send_update(context, old_ref, new_ref)
-
-                    LOG.debug(_('~~~~~~ current state = %s ~~~~~~'), state,
-                              instance=instance)
-                    LOG.debug(_("instance %s spawned successfully"),
-                            instance['name'], instance=instance)
-                else:
-                    LOG.debug(_('instance %s:not booted'), instance['name'],
-                              instance=instance)
-            except Exception:
-                LOG.exception(_("Baremetal assignment is overcommitted."),
-                          instance=instance)
-                (old_ref, new_ref) = db.instance_update_and_get_original(
-                        context, instance['uuid'],
-                        {'vm_state': vm_states.ERROR,
-                         'power_state': power_state.FAILED})
-                notifications.send_update(context, old_ref, new_ref)
-
-            timer.stop()
-        timer.f = _wait_for_boot
-
-        return timer.start(interval=0.5).wait()
-
-    def get_console_output(self, instance):
-        console_log = os.path.join(FLAGS.instances_path, instance['name'],
-                                   'console.log')
-
-        libvirt_utils.chown(console_log, os.getuid())
-
-        fd = self._conn.find_domain(instance['name'])
-
-        self.baremetal_nodes.get_console_output(console_log, fd['node_id'])
-
-        fpath = console_log
-
-        return libvirt_utils.load_file(fpath)
-
-    @exception.wrap_exception
-    def get_ajax_console(self, instance):
-        raise NotImplementedError()
-
-    @exception.wrap_exception
-    def get_vnc_console(self, instance):
-        raise NotImplementedError()
-
-    @staticmethod
-    def _cache_image(fn, target, fname, cow=False, *args, **kwargs):
-        """Wrapper for a method that creates an image that caches the image.
-
-        This wrapper will save the image into a common store and create a
-        copy for use by the hypervisor.
-
-        The underlying method should specify a kwarg of target representing
-        where the image will be saved.
-
-        fname is used as the filename of the base image.  The filename needs
-        to be unique to a given image.
-
-        If cow is True, it will make a CoW image instead of a copy.
-        """
-        if not os.path.exists(target):
-            base_dir = os.path.join(FLAGS.instances_path, '_base')
-            if not os.path.exists(base_dir):
-                libvirt_utils.ensure_tree(base_dir)
-            base = os.path.join(base_dir, fname)
-
-            @utils.synchronized(fname)
-            def call_if_not_exists(base, fn, *args, **kwargs):
-                if not os.path.exists(base):
-                    fn(target=base, *args, **kwargs)
-
-            call_if_not_exists(base, fn, *args, **kwargs)
-
-            if cow:
-                libvirt_utils.create_cow_image(base, target)
-            else:
-                libvirt_utils.copy_image(base, target)
-
-    def _create_image(self, context, inst, xml, suffix='',
-                      disk_images=None, network_info=None,
-                      block_device_info=None):
-        if not suffix:
-            suffix = ''
-
-        # syntactic nicety
-        def basepath(fname='', suffix=suffix):
-            return os.path.join(FLAGS.instances_path,
-                                inst['name'],
-                                fname + suffix)
-
-        # ensure directories exist and are writable
-        libvirt_utils.ensure_tree(basepath(suffix=''))
-        utils.execute('chmod', '0777', basepath(suffix=''))
-
-        LOG.info(_('instance %s: Creating image'), inst['name'],
-                 instance=inst)
-
-        if FLAGS.baremetal_type == 'lxc':
-            container_dir = '%s/rootfs' % basepath(suffix='')
-            libvirt_utils.ensure_tree(container_dir)
-
-        # NOTE(vish): No need add the suffix to console.log
-        libvirt_utils.write_to_file(basepath('console.log', ''), '', 007)
-
-        if not disk_images:
-            disk_images = {'image_id': inst['image_ref'],
-                           'kernel_id': inst['kernel_id'],
-                           'ramdisk_id': inst['ramdisk_id']}
-
-        if disk_images['kernel_id']:
-            fname = disk_images['kernel_id']
-            self._cache_image(fn=libvirt_utils.fetch_image,
-                              context=context,
-                              target=basepath('kernel'),
-                              fname=fname,
-                              cow=False,
-                              image_id=disk_images['kernel_id'],
-                              user_id=inst['user_id'],
-                              project_id=inst['project_id'])
-            if disk_images['ramdisk_id']:
-                fname = disk_images['ramdisk_id']
-                self._cache_image(fn=libvirt_utils.fetch_image,
-                                  context=context,
-                                  target=basepath('ramdisk'),
-                                  fname=fname,
-                                  cow=False,
-                                  image_id=disk_images['ramdisk_id'],
-                                  user_id=inst['user_id'],
-                                  project_id=inst['project_id'])
-
-        root_fname = hashlib.sha1(str(disk_images['image_id'])).hexdigest()
-        size = inst['root_gb'] * 1024 * 1024 * 1024
-
-        inst_type_id = inst['instance_type_id']
-        inst_type = instance_types.get_instance_type(inst_type_id)
-        if inst_type['name'] == 'm1.tiny' or suffix == '.rescue':
-            size = None
-            root_fname += "_sm"
-        else:
-            root_fname += "_%d" % inst['root_gb']
-
-        self._cache_image(fn=libvirt_utils.fetch_image,
-                          context=context,
-                          target=basepath('root'),
-                          fname=root_fname,
-                          cow=False,  # FLAGS.use_cow_images,
-                          image_id=disk_images['image_id'],
-                          user_id=inst['user_id'],
-                          project_id=inst['project_id'])
-
-        # For now, we assume that if we're not using a kernel, we're using a
-        # partitioned disk image where the target partition is the first
-        # partition
-        target_partition = None
-        if not inst['kernel_id']:
-            target_partition = "1"
-
-        if FLAGS.baremetal_type == 'lxc':
-            target_partition = None
-
-        if inst['key_data']:
-            key = str(inst['key_data'])
-        else:
-            key = None
-        net = None
-
-        nets = []
-        ifc_template = open(FLAGS.injected_network_template).read()
-        ifc_num = -1
-        have_injected_networks = False
-        admin_context = nova_context.get_admin_context()
-        for (network_ref, mapping) in network_info:
-            ifc_num += 1
-
-            if not network_ref['injected']:
-                continue
-
-            have_injected_networks = True
-            address = mapping['ips'][0]['ip']
-            netmask = mapping['ips'][0]['netmask']
-            address_v6 = None
-            gateway_v6 = None
-            netmask_v6 = None
-            if FLAGS.use_ipv6:
-                address_v6 = mapping['ip6s'][0]['ip']
-                netmask_v6 = mapping['ip6s'][0]['netmask']
-                gateway_v6 = mapping['gateway_v6']
-            net_info = {'name': 'eth%d' % ifc_num,
-                   'address': address,
-                   'netmask': netmask,
-                   'gateway': mapping['gateway'],
-                   'broadcast': mapping['broadcast'],
-                   'dns': ' '.join(mapping['dns']),
-                   'address_v6': address_v6,
-                   'gateway_v6': gateway_v6,
-                   'netmask_v6': netmask_v6}
-            nets.append(net_info)
-
-        if have_injected_networks:
-            net = str(Template(ifc_template,
-                               searchList=[{'interfaces': nets,
-                                            'use_ipv6': FLAGS.use_ipv6}]))
-
-        metadata = inst.get('metadata')
-        if any((key, net, metadata)):
-            inst_name = inst['name']
-
-            injection_path = basepath('root')
-            img_id = inst['image_ref']
-
-            for injection in ('metadata', 'key', 'net'):
-                if locals()[injection]:
-                    LOG.info(_('instance %(inst_name)s: injecting '
-                               '%(injection)s into image %(img_id)s'),
-                             locals(), instance=inst)
-            try:
-                disk.inject_data(injection_path, key, net, metadata,
-                                 partition=target_partition,
-                                 use_cow=False)  # FLAGS.use_cow_images
-
-            except Exception as e:
-                # This could be a windows image, or a vmdk format disk
-                LOG.warn(_('instance %(inst_name)s: ignoring error injecting'
-                        ' data into image %(img_id)s (%(e)s)') % locals(),
-                         instance=inst)
-
-    def _prepare_xml_info(self, instance, network_info, rescue,
-                          block_device_info=None):
-        # block_device_mapping = driver.block_device_info_get_mapping(
-        #    block_device_info)
-        _map = 0
-        for (_, mapping) in network_info:
-            _map += 1
-
-        nics = []
-        # FIXME(vish): stick this in db
-        inst_type_id = instance['instance_type_id']
-        inst_type = instance_types.get_instance_type(inst_type_id)
-
-        driver_type = 'raw'
-
-        xml_info = {'type': FLAGS.baremetal_type,
-                    'name': instance['name'],
-                    'basepath': os.path.join(FLAGS.instances_path,
-                                             instance['name']),
-                    'memory_kb': inst_type['memory_mb'] * 1024,
-                    'vcpus': inst_type['vcpus'],
-                    'rescue': rescue,
-                    'driver_type': driver_type,
-                    'nics': nics,
-                    'ip_address': mapping['ips'][0]['ip'],
-                    'mac_address': mapping['mac'],
-                    'user_data': instance['user_data'],
-                    'image_id': instance['image_ref'],
-                    'kernel_id': instance['kernel_id'],
-                    'ramdisk_id': instance['ramdisk_id']}
-
-        if not rescue:
-            if instance['kernel_id']:
-                xml_info['kernel'] = xml_info['basepath'] + "/kernel"
-
-            if instance['ramdisk_id']:
-                xml_info['ramdisk'] = xml_info['basepath'] + "/ramdisk"
-
-            xml_info['disk'] = xml_info['basepath'] + "/disk"
-        return xml_info
-
-    def to_xml_dict(self, instance, rescue=False, network_info=None):
-        LOG.debug(_('instance %s: starting toXML method'), instance['name'],
-                  instance=instance)
-        xml_info = self._prepare_xml_info(instance, rescue, network_info)
-        LOG.debug(_('instance %s: finished toXML method'), instance['name'],
-                  instance=instance)
-        return xml_info
-
-    def get_info(self, instance):
-        """Retrieve information from baremetal for a specific instance name.
-
-        If a baremetal error is encountered during lookup, we might raise a
-        NotFound exception or Error exception depending on how severe the
-        baremetal error is.
-
-        """
-        _domain_info = self._conn.get_domain_info(instance['name'])
-        state, max_mem, mem, num_cpu, cpu_time = _domain_info
-        return {'state': state,
-                'max_mem': max_mem,
-                'mem': mem,
-                'num_cpu': num_cpu,
-                'cpu_time': cpu_time}
-
-    def _create_new_domain(self, persistent=True, launch_flags=0):
-        raise NotImplementedError()
-
-    def get_diagnostics(self, instance_name):
-        # diagnostics are not supported for baremetal
-        raise NotImplementedError()
-
-    def get_disks(self, instance_name):
-        raise NotImplementedError()
-
-    def get_interfaces(self, instance_name):
-        raise NotImplementedError()
-
-    def get_vcpu_total(self):
-        """Get vcpu number of physical computer.
-
-        :returns: the number of cpu core.
-
-        """
-
-        # On certain platforms, this will raise a NotImplementedError.
-        try:
-            return self.baremetal_nodes.get_hw_info('vcpus')
-        except NotImplementedError:
-            LOG.warn(_("Cannot get the number of cpu, because this "
-                       "function is not implemented for this platform. "
-                       "This error can be safely ignored for now."))
-            return False
-
-    def get_memory_mb_total(self):
-        """Get the total memory size(MB) of physical computer.
-
-        :returns: the total amount of memory(MB).
-
-        """
-        return self.baremetal_nodes.get_hw_info('memory_mb')
-
-    def get_local_gb_total(self):
-        """Get the total hdd size(GB) of physical computer.
-
-        :returns:
-            The total amount of HDD(GB).
-            Note that this value shows a partition where
-            NOVA-INST-DIR/instances mounts.
-
-        """
-        return self.baremetal_nodes.get_hw_info('local_gb')
-
-    def get_vcpu_used(self):
-        """ Get vcpu usage number of physical computer.
-
-        :returns: The total number of vcpu that currently used.
-
-        """
-        return len(self._conn.list_domains())
-
-    def get_memory_mb_used(self):
-        """Get the free memory size(MB) of physical computer.
-
-        :returns: the total usage of memory(MB).
-
-        """
-        return self.baremetal_nodes.get_hw_info('memory_mb_used')
-
-    def get_local_gb_used(self):
-        """Get the free hdd size(GB) of physical computer.
-
-        :returns:
-           The total usage of HDD(GB).
-           Note that this value shows a partition where
-           NOVA-INST-DIR/instances mounts.
-
-        """
-        return self.baremetal_nodes.get_hw_info('local_gb_used')
+        return
 
     def get_hypervisor_type(self):
-        """Get hypervisor type.
-
-        :returns: hypervisor type (ex. qemu)
-
-        """
-        return self.baremetal_nodes.get_hw_info('hypervisor_type')
+        return 'baremetal'
 
     def get_hypervisor_version(self):
-        """Get hypervisor version.
+        # TODO(deva): define the version properly elsewhere
+        return 1
 
-        :returns: hypervisor version (ex. 12003)
+    def list_instances(self):
+        l = []
+        context = nova_context.get_admin_context()
+        for node in db.bm_node_get_associated(context, service_host=CONF.host):
+            l.append(node['instance_name'])
+        return l
 
+    def _require_node(self, instance):
+        """Get a node's uuid out of a manager instance dict.
+
+        The compute manager is meant to know the node uuid, so missing uuid
+        a significant issue - it may mean we've been passed someone elses data.
         """
-        return self.baremetal_nodes.get_hw_info('hypervisor_version')
+        node_uuid = instance.get('node')
+        if not node_uuid:
+            raise exception.NovaException(_(
+                    "Baremetal node id not supplied to driver for %r")
+                    % instance['uuid'])
+        return node_uuid
 
-    def get_cpu_info(self):
-        """Get cpuinfo information.
+    def _attach_block_devices(self, instance, block_device_info):
+        block_device_mapping = driver.\
+                block_device_info_get_mapping(block_device_info)
+        for vol in block_device_mapping:
+            connection_info = vol['connection_info']
+            mountpoint = vol['mount_device']
+            self.attach_volume(None,
+                    connection_info, instance, mountpoint)
 
-        Obtains cpu feature from virConnect.getCapabilities,
-        and returns as a json string.
+    def _detach_block_devices(self, instance, block_device_info):
+        block_device_mapping = driver.\
+                block_device_info_get_mapping(block_device_info)
+        for vol in block_device_mapping:
+            connection_info = vol['connection_info']
+            mountpoint = vol['mount_device']
+            self.detach_volume(
+                    connection_info, instance, mountpoint)
 
-        :return: see above description
+    def _start_firewall(self, instance, network_info):
+        self.firewall_driver.setup_basic_filtering(
+                instance, network_info)
+        self.firewall_driver.prepare_instance_filter(
+                instance, network_info)
+        self.firewall_driver.apply_instance_filter(
+                instance, network_info)
 
+    def _stop_firewall(self, instance, network_info):
+        self.firewall_driver.unfilter_instance(
+                instance, network_info)
+
+    def macs_for_instance(self, instance):
+        context = nova_context.get_admin_context()
+        node_uuid = self._require_node(instance)
+        node = db.bm_node_get_by_node_uuid(context, node_uuid)
+        ifaces = db.bm_interface_get_all_by_bm_node_id(context, node['id'])
+        return set(iface['address'] for iface in ifaces)
+
+    def _set_default_ephemeral_device(self, instance):
+        flavor = flavors.extract_flavor(instance)
+        if flavor['ephemeral_gb']:
+            self.virtapi.instance_update(
+                nova_context.get_admin_context(), instance['uuid'],
+                {'default_ephemeral_device':
+                    '/dev/sda1'})
+
+    def spawn(self, context, instance, image_meta, injected_files,
+              admin_password, network_info=None, block_device_info=None):
+        node_uuid = self._require_node(instance)
+        self._set_default_ephemeral_device(instance)
+
+        # NOTE(deva): this db method will raise an exception if the node is
+        #             already in use. We call it here to ensure no one else
+        #             allocates this node before we begin provisioning it.
+        node = db.bm_node_associate_and_update(context, node_uuid,
+                    {'instance_uuid': instance['uuid'],
+                     'instance_name': instance['hostname'],
+                     'task_state': baremetal_states.BUILDING,
+                     'preserve_ephemeral': False})
+        self._spawn(node, context, instance, image_meta, injected_files,
+            admin_password, network_info=network_info,
+            block_device_info=block_device_info)
+
+    def _spawn(self, node, context, instance, image_meta, injected_files,
+            admin_password, network_info=None, block_device_info=None):
+        try:
+            self._plug_vifs(instance, network_info, context=context)
+            self._attach_block_devices(instance, block_device_info)
+            self._start_firewall(instance, network_info)
+
+            self.driver.cache_images(
+                            context, node, instance,
+                            admin_password=admin_password,
+                            image_meta=image_meta,
+                            injected_files=injected_files,
+                            network_info=network_info,
+                        )
+            self.driver.activate_bootloader(context, node, instance,
+                                            network_info=network_info)
+            # NOTE(deva): ensure node is really off before we turn it on
+            #             fixes bug https://code.launchpad.net/bugs/1178919
+            self.power_off(instance, node)
+            self.power_on(context, instance, network_info, block_device_info,
+                          node)
+            _update_state(context, node, instance, baremetal_states.PREPARED)
+
+            self.driver.activate_node(context, node, instance)
+            _update_state(context, node, instance, baremetal_states.ACTIVE)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.error(_("Error deploying instance %(instance)s "
+                            "on baremetal node %(node)s.") %
+                            {'instance': instance['uuid'],
+                             'node': node['uuid']})
+
+                # Do not set instance=None yet. This prevents another
+                # spawn() while we are cleaning up.
+                _update_state(context, node, instance, baremetal_states.ERROR)
+
+                self.driver.deactivate_node(context, node, instance)
+                self.power_off(instance, node)
+                self.driver.deactivate_bootloader(context, node, instance)
+                self.driver.destroy_images(context, node, instance)
+
+                self._detach_block_devices(instance, block_device_info)
+                self._stop_firewall(instance, network_info)
+                self._unplug_vifs(instance, network_info)
+
+                _update_state(context, node, None, baremetal_states.DELETED)
+
+    def rebuild(self, context, instance, image_meta, injected_files,
+                admin_password, bdms, detach_block_devices,
+                attach_block_devices, network_info=None, recreate=False,
+                block_device_info=None, preserve_ephemeral=False):
+        """Destroy and re-make this instance.
+
+        A 'rebuild' effectively purges all existing data from the system and
+        remakes the VM with given 'metadata' and 'personalities'.
+
+        :param context: Security context.
+        :param instance: Instance object.
+        :param image_meta: Image object returned by nova.image.glance that
+                           defines the image from which to boot this instance.
+        :param injected_files: User files to inject into instance.
+        :param admin_password: Administrator password to set in instance.
+        :param bdms: block-device-mappings to use for rebuild
+        :param detach_block_devices: function to detach block devices. See
+            nova.compute.manager.ComputeManager:_rebuild_default_impl for
+            usage.
+        :param attach_block_devices: function to attach block devices. See
+            nova.compute.manager.ComputeManager:_rebuild_default_impl for
+            usage.
+        :param network_info:
+           :py:meth:`~nova.network.manager.NetworkManager.get_instance_nw_info`
+        :param block_device_info: Information about block devices to be
+                                  attached to the instance.
+        :param recreate: True if instance should be recreated with same disk.
+        :param preserve_ephemeral: True if the default ephemeral storage
+                                   partition must be preserved on rebuild.
         """
-        return self.baremetal_nodes.get_hw_info('cpu_info')
 
-    def block_stats(self, instance_name, disk):
-        raise NotImplementedError()
+        instance.task_state = task_states.REBUILD_SPAWNING
+        instance.save(expected_task_state=[task_states.REBUILDING])
 
-    def interface_stats(self, instance_name, interface):
-        raise NotImplementedError()
+        node_uuid = self._require_node(instance)
+        node = db.bm_node_get_by_node_uuid(context, node_uuid)
+        db.bm_node_update(
+            context, node['id'],
+            {'task_state': baremetal_states.BUILDING,
+             'preserve_ephemeral': preserve_ephemeral}
+        )
+        self._spawn(node, context, instance, image_meta, injected_files,
+                    admin_password, network_info=network_info,
+                    block_device_info=block_device_info)
 
-    def get_console_pool_info(self, console_type):
-        #TODO(mdragon): console proxy should be implemented for baremetal,
-        #               in case someone wants to use it.
-        #               For now return fake data.
-        return {'address': '127.0.0.1',
-                'username': 'fakeuser',
-                'password': 'fakepassword'}
+    def reboot(self, context, instance, network_info, reboot_type,
+               block_device_info=None, bad_volumes_callback=None):
+        node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
+        ctx = nova_context.get_admin_context()
+        pm = get_power_manager(node=node, instance=instance)
+        state = pm.reboot_node()
+        if pm.state != baremetal_states.ACTIVE:
+            raise exception.InstanceRebootFailure(_(
+                "Baremetal power manager failed to restart node "
+                "for instance %r") % instance['uuid'])
+        _update_state(ctx, node, instance, state)
 
-    def refresh_security_group_rules(self, security_group_id):
-        # Bare metal doesn't currently support security groups
-        pass
-
-    def refresh_security_group_members(self, security_group_id):
-        # Bare metal doesn't currently support security groups
-        pass
-
-    def refresh_instance_security_rules(self, instance):
-        # Bare metal doesn't currently support security groups
-        pass
-
-    def update_available_resource(self, ctxt, host):
-        """Updates compute manager resource info on ComputeNode table.
-
-        This method is called when nova-coompute launches, and
-        whenever admin executes "nova-manage service update_resource".
-
-        :param ctxt: security context
-        :param host: hostname that compute manager is currently running
-
-        """
+    def destroy(self, context, instance, network_info, block_device_info=None):
+        context = nova_context.get_admin_context()
 
         try:
-            service_ref = db.service_get_all_compute_by_host(ctxt, host)[0]
-        except exception.NotFound:
-            raise exception.ComputeServiceUnavailable(host=host)
+            node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
+        except exception.InstanceNotFound:
+            LOG.warning(_("Destroy called on non-existing instance %s")
+                    % instance['uuid'])
+            return
 
-        # Updating host information
-        dic = {'vcpus': self.get_vcpu_total(),
-               'memory_mb': self.get_memory_mb_total(),
-               'local_gb': self.get_local_gb_total(),
-               'vcpus_used': self.get_vcpu_used(),
-               'memory_mb_used': self.get_memory_mb_used(),
-               'local_gb_used': self.get_local_gb_used(),
-               'hypervisor_type': self.get_hypervisor_type(),
-               'hypervisor_version': self.get_hypervisor_version(),
-               'cpu_info': self.get_cpu_info(),
-               'cpu_arch': FLAGS.cpu_arch,
-               'service_id': service_ref['id']}
+        try:
+            self.driver.deactivate_node(context, node, instance)
+            self.power_off(instance, node)
+            self.driver.deactivate_bootloader(context, node, instance)
+            self.driver.destroy_images(context, node, instance)
 
-        compute_node_ref = service_ref['compute_node']
-        LOG.info(_('#### RLK: cpu_arch = %s ') % FLAGS.cpu_arch)
-        if not compute_node_ref:
-            LOG.info(_('Compute_service record created for %s ') % host)
-            dic['service_id'] = service_ref['id']
-            db.compute_node_create(ctxt, dic)
-        else:
-            LOG.info(_('Compute_service record updated for %s ') % host)
-            db.compute_node_update(ctxt, compute_node_ref[0]['id'], dic)
+            self._detach_block_devices(instance, block_device_info)
+            self._stop_firewall(instance, network_info)
+            self._unplug_vifs(instance, network_info)
 
-    def ensure_filtering_rules_for_instance(self, instance_ref, network_info):
-        raise NotImplementedError()
+            _update_state(context, node, None, baremetal_states.DELETED)
+        except Exception as e:
+            with excutils.save_and_reraise_exception():
+                try:
+                    LOG.error(_("Error from baremetal driver "
+                                "during destroy: %s") % e)
+                    _update_state(context, node, instance,
+                                  baremetal_states.ERROR)
+                except Exception:
+                    LOG.error(_("Error while recording destroy failure in "
+                                "baremetal database: %s") % e)
 
-    def live_migration(self, ctxt, instance_ref, dest,
-                       post_method, recover_method):
-        raise NotImplementedError()
-
-    def unfilter_instance(self, instance_ref):
-        """See comments of same method in firewall_driver."""
+    def cleanup(self, context, instance, network_info, block_device_info=None,
+                destroy_disks=True):
+        """Cleanup after instance being destroyed."""
         pass
 
-    def update_host_status(self):
-        """Update the status info of the host, and return those values
-            to the calling program."""
-        return self.HostState.update_status()
+    def power_off(self, instance, node=None):
+        """Power off the specified instance."""
+        if not node:
+            node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
+        pm = get_power_manager(node=node, instance=instance)
+        pm.deactivate_node()
+        if pm.state != baremetal_states.DELETED:
+            raise exception.InstancePowerOffFailure(_(
+                "Baremetal power manager failed to stop node "
+                "for instance %r") % instance['uuid'])
+        pm.stop_console()
+
+    def power_on(self, context, instance, network_info, block_device_info=None,
+                 node=None):
+        """Power on the specified instance."""
+        if not node:
+            node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
+        pm = get_power_manager(node=node, instance=instance)
+        pm.activate_node()
+        if pm.state != baremetal_states.ACTIVE:
+            raise exception.InstancePowerOnFailure(_(
+                "Baremetal power manager failed to start node "
+                "for instance %r") % instance['uuid'])
+        pm.start_console()
+
+    def get_volume_connector(self, instance):
+        return self.volume_driver.get_volume_connector(instance)
+
+    def attach_volume(self, context, connection_info, instance, mountpoint,
+                      encryption=None):
+        return self.volume_driver.attach_volume(connection_info,
+                                                instance, mountpoint)
+
+    def detach_volume(self, connection_info, instance, mountpoint,
+                      encryption=None):
+        return self.volume_driver.detach_volume(connection_info,
+                                                instance, mountpoint)
+
+    def get_info(self, instance):
+        inst_uuid = instance.get('uuid')
+        node = _get_baremetal_node_by_instance_uuid(inst_uuid)
+        pm = get_power_manager(node=node, instance=instance)
+
+        # NOTE(deva): Power manager may not be able to determine power state
+        #             in which case it may return "None" here.
+        ps = pm.is_power_on()
+        if ps:
+            pstate = power_state.RUNNING
+        elif ps is False:
+            pstate = power_state.SHUTDOWN
+        else:
+            pstate = power_state.NOSTATE
+
+        return {'state': pstate,
+                'max_mem': node['memory_mb'],
+                'mem': node['memory_mb'],
+                'num_cpu': node['cpus'],
+                'cpu_time': 0}
+
+    def refresh_security_group_rules(self, security_group_id):
+        self.firewall_driver.refresh_security_group_rules(security_group_id)
+        return True
+
+    def refresh_security_group_members(self, security_group_id):
+        self.firewall_driver.refresh_security_group_members(security_group_id)
+        return True
+
+    def refresh_provider_fw_rules(self):
+        self.firewall_driver.refresh_provider_fw_rules()
+
+    def _node_resource(self, node):
+        vcpus_used = 0
+        memory_mb_used = 0
+        local_gb_used = 0
+
+        vcpus = node['cpus']
+        memory_mb = node['memory_mb']
+        local_gb = node['local_gb']
+        if node['instance_uuid']:
+            vcpus_used = node['cpus']
+            memory_mb_used = node['memory_mb']
+            local_gb_used = node['local_gb']
+
+        dic = {'vcpus': vcpus,
+               'memory_mb': memory_mb,
+               'local_gb': local_gb,
+               'vcpus_used': vcpus_used,
+               'memory_mb_used': memory_mb_used,
+               'local_gb_used': local_gb_used,
+               'hypervisor_type': self.get_hypervisor_type(),
+               'hypervisor_version': self.get_hypervisor_version(),
+               'hypervisor_hostname': str(node['uuid']),
+               'cpu_info': 'baremetal cpu',
+               'supported_instances':
+                        jsonutils.dumps(self.supported_instances),
+               'stats': self.extra_specs
+               }
+        return dic
+
+    def refresh_instance_security_rules(self, instance):
+        self.firewall_driver.refresh_instance_security_rules(instance)
+
+    def get_available_resource(self, nodename):
+        context = nova_context.get_admin_context()
+        resource = {}
+        try:
+            node = db.bm_node_get_by_node_uuid(context, nodename)
+            resource = self._node_resource(node)
+        except exception.NodeNotFoundByUUID:
+            pass
+        return resource
+
+    def ensure_filtering_rules_for_instance(self, instance_ref, network_info):
+        self.firewall_driver.setup_basic_filtering(instance_ref, network_info)
+        self.firewall_driver.prepare_instance_filter(instance_ref,
+                                                      network_info)
+
+    def unfilter_instance(self, instance_ref, network_info):
+        self.firewall_driver.unfilter_instance(instance_ref,
+                                                network_info=network_info)
 
     def get_host_stats(self, refresh=False):
-        """Return the current state of the host. If 'refresh' is
-           True, run the update first."""
-        LOG.debug(_("Updating!"))
-        return self.HostState.get_host_stats(refresh=refresh)
+        caps = []
+        context = nova_context.get_admin_context()
+        nodes = db.bm_node_get_all(context,
+                                     service_host=CONF.host)
+        for node in nodes:
+            res = self._node_resource(node)
+            nodename = str(node['uuid'])
+            data = {}
+            data['vcpus'] = res['vcpus']
+            data['vcpus_used'] = res['vcpus_used']
+            data['cpu_info'] = res['cpu_info']
+            data['disk_total'] = res['local_gb']
+            data['disk_used'] = res['local_gb_used']
+            data['disk_available'] = res['local_gb'] - res['local_gb_used']
+            data['host_memory_total'] = res['memory_mb']
+            data['host_memory_free'] = res['memory_mb'] - res['memory_mb_used']
+            data['hypervisor_type'] = res['hypervisor_type']
+            data['hypervisor_version'] = res['hypervisor_version']
+            data['hypervisor_hostname'] = nodename
+            data['supported_instances'] = self.supported_instances
+            data.update(self.extra_specs)
+            data['host'] = CONF.host
+            data['node'] = nodename
+            # TODO(NTTdocomo): put node's extra specs here
+            caps.append(data)
+        return caps
 
+    def plug_vifs(self, instance, network_info):
+        """Plugin VIFs into networks."""
+        self._plug_vifs(instance, network_info)
 
-class HostState(object):
-    """Manages information about the XenServer host this compute
-    node is running on.
-    """
+    def _plug_vifs(self, instance, network_info, context=None):
+        if not context:
+            context = nova_context.get_admin_context()
+        node = _get_baremetal_node_by_instance_uuid(instance['uuid'])
+        if node:
+            pifs = db.bm_interface_get_all_by_bm_node_id(context, node['id'])
+            for pif in pifs:
+                if pif['vif_uuid']:
+                    db.bm_interface_set_vif_uuid(context, pif['id'], None)
+        for vif in network_info:
+            self.vif_driver.plug(instance, vif)
 
-    def __init__(self, connection):
-        super(HostState, self).__init__()
-        self.connection = connection
-        self._stats = {}
-        self.update_status()
+    def _unplug_vifs(self, instance, network_info):
+        for vif in network_info:
+            self.vif_driver.unplug(instance, vif)
 
-    def get_host_stats(self, refresh=False):
-        """Return the current state of the host. If 'refresh' is
-        True, run the update first.
-        """
-        if refresh:
-            self.update_status()
-        return self._stats
+    def manage_image_cache(self, context, all_instances):
+        """Manage the local cache of images."""
+        self.image_cache_manager.update(context, all_instances)
 
-    def update_status(self):
-        """
-        We can get host status information.
-        """
-        LOG.debug(_("Updating host stats"))
-        data = {}
-        data["vcpus"] = self.connection.get_vcpu_total()
-        data["vcpus_used"] = self.connection.get_vcpu_used()
-        data["cpu_info"] = self.connection.get_cpu_info()
-        data["cpu_arch"] = FLAGS.cpu_arch
-        data["disk_total"] = self.connection.get_local_gb_total()
-        data["disk_used"] = self.connection.get_local_gb_used()
-        data["disk_available"] = data["disk_total"] - data["disk_used"]
-        data["host_memory_total"] = self.connection.get_memory_mb_total()
-        data["host_memory_free"] = (data["host_memory_total"] -
-                                    self.connection.get_memory_mb_used())
-        data["hypervisor_type"] = self.connection.get_hypervisor_type()
-        data["hypervisor_version"] = self.connection.get_hypervisor_version()
-        self._stats = data
+    def get_console_output(self, context, instance):
+        node = _get_baremetal_node_by_instance_uuid(instance.uuid)
+        return self.driver.get_console_output(node, instance)
+
+    def get_available_nodes(self, refresh=False):
+        context = nova_context.get_admin_context()
+        return [str(n['uuid']) for n in
+                db.bm_node_get_all(context, service_host=CONF.host)]
+
+    def dhcp_options_for_instance(self, instance):
+        return self.driver.dhcp_options_for_instance(instance)

@@ -16,268 +16,116 @@
 
 import __builtin__
 import datetime
+import functools
 import hashlib
+import importlib
+import multiprocessing
 import os
 import os.path
-import shutil
-import socket
 import StringIO
 import tempfile
 
-import eventlet
-from eventlet import greenpool
-import iso8601
 import mox
+import netaddr
+from oslo.config import cfg
 
 import nova
 from nova import exception
-from nova import flags
+from nova.openstack.common import processutils
 from nova.openstack.common import timeutils
 from nova import test
 from nova import utils
 
-
-FLAGS = flags.FLAGS
-
-
-class ExecuteTestCase(test.TestCase):
-    def test_retry_on_failure(self):
-        fd, tmpfilename = tempfile.mkstemp()
-        _, tmpfilename2 = tempfile.mkstemp()
-        try:
-            fp = os.fdopen(fd, 'w+')
-            fp.write('''#!/bin/sh
-# If stdin fails to get passed during one of the runs, make a note.
-if ! grep -q foo
-then
-    echo 'failure' > "$1"
-fi
-# If stdin has failed to get passed during this or a previous run, exit early.
-if grep failure "$1"
-then
-    exit 1
-fi
-runs="$(cat $1)"
-if [ -z "$runs" ]
-then
-    runs=0
-fi
-runs=$(($runs + 1))
-echo $runs > "$1"
-exit 1
-''')
-            fp.close()
-            os.chmod(tmpfilename, 0755)
-            self.assertRaises(exception.ProcessExecutionError,
-                              utils.execute,
-                              tmpfilename, tmpfilename2, attempts=10,
-                              process_input='foo',
-                              delay_on_retry=False)
-            fp = open(tmpfilename2, 'r')
-            runs = fp.read()
-            fp.close()
-            self.assertNotEquals(runs.strip(), 'failure', 'stdin did not '
-                                                          'always get passed '
-                                                          'correctly')
-            runs = int(runs.strip())
-            self.assertEquals(runs, 10,
-                              'Ran %d times instead of 10.' % (runs,))
-        finally:
-            os.unlink(tmpfilename)
-            os.unlink(tmpfilename2)
-
-    def test_unknown_kwargs_raises_error(self):
-        self.assertRaises(exception.NovaException,
-                          utils.execute,
-                          '/usr/bin/env', 'true',
-                          this_is_not_a_valid_kwarg=True)
-
-    def test_check_exit_code_boolean(self):
-        utils.execute('/usr/bin/env', 'false', check_exit_code=False)
-        self.assertRaises(exception.ProcessExecutionError,
-                          utils.execute,
-                          '/usr/bin/env', 'false', check_exit_code=True)
-
-    def test_no_retry_on_success(self):
-        fd, tmpfilename = tempfile.mkstemp()
-        _, tmpfilename2 = tempfile.mkstemp()
-        try:
-            fp = os.fdopen(fd, 'w+')
-            fp.write('''#!/bin/sh
-# If we've already run, bail out.
-grep -q foo "$1" && exit 1
-# Mark that we've run before.
-echo foo > "$1"
-# Check that stdin gets passed correctly.
-grep foo
-''')
-            fp.close()
-            os.chmod(tmpfilename, 0755)
-            utils.execute(tmpfilename,
-                          tmpfilename2,
-                          process_input='foo',
-                          attempts=2)
-        finally:
-            os.unlink(tmpfilename)
-            os.unlink(tmpfilename2)
+CONF = cfg.CONF
 
 
-class GetFromPathTestCase(test.TestCase):
-    def test_tolerates_nones(self):
-        f = utils.get_from_path
+class GetMyIP4AddressTestCase(test.NoDBTestCase):
+    def test_get_my_ipv4_address_with_no_ipv4(self):
+        response = """172.16.0.0/16 via 172.16.251.13 dev tun1
+172.16.251.1 via 172.16.251.13 dev tun1
+172.16.251.13 dev tun1  proto kernel  scope link  src 172.16.251.14
+172.24.0.0/16 via 172.16.251.13 dev tun1
+192.168.122.0/24 dev virbr0  proto kernel  scope link  src 192.168.122.1"""
 
-        input = []
-        self.assertEquals([], f(input, "a"))
-        self.assertEquals([], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
+        def fake_execute(*args, **kwargs):
+            return response, None
 
-        input = [None]
-        self.assertEquals([], f(input, "a"))
-        self.assertEquals([], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
+        self.stubs.Set(utils, 'execute', fake_execute)
+        address = utils.get_my_ipv4_address()
+        self.assertEqual(address, '127.0.0.1')
 
-        input = [{'a': None}]
-        self.assertEquals([], f(input, "a"))
-        self.assertEquals([], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
+    def test_get_my_ipv4_address_bad_process(self):
+        def fake_execute(*args, **kwargs):
+            raise processutils.ProcessExecutionError()
 
-        input = [{'a': {'b': None}}]
-        self.assertEquals([{'b': None}], f(input, "a"))
-        self.assertEquals([], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
+        self.stubs.Set(utils, 'execute', fake_execute)
+        address = utils.get_my_ipv4_address()
+        self.assertEqual(address, '127.0.0.1')
 
-        input = [{'a': {'b': {'c': None}}}]
-        self.assertEquals([{'b': {'c': None}}], f(input, "a"))
-        self.assertEquals([{'c': None}], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
+    def test_get_my_ipv4_address_with_single_interface(self):
+        response_route = """default via 192.168.1.1 dev wlan0  proto static
+192.168.1.0/24 dev wlan0  proto kernel  scope link  src 192.168.1.137  metric 9
+"""
+        response_addr = """
+1: lo    inet 127.0.0.1/8 scope host lo
+3: wlan0    inet 192.168.1.137/24 brd 192.168.1.255 scope global wlan0
+"""
 
-        input = [{'a': {'b': {'c': None}}}, {'a': None}]
-        self.assertEquals([{'b': {'c': None}}], f(input, "a"))
-        self.assertEquals([{'c': None}], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
+        def fake_execute(*args, **kwargs):
+            if 'route' in args:
+                return response_route, None
+            return response_addr, None
 
-        input = [{'a': {'b': {'c': None}}}, {'a': {'b': None}}]
-        self.assertEquals([{'b': {'c': None}}, {'b': None}], f(input, "a"))
-        self.assertEquals([{'c': None}], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
+        self.stubs.Set(utils, 'execute', fake_execute)
+        address = utils.get_my_ipv4_address()
+        self.assertEqual(address, '192.168.1.137')
 
-    def test_does_select(self):
-        f = utils.get_from_path
+    def test_get_my_ipv4_address_with_multi_ipv4_on_single_interface(self):
+        response_route = """
+172.18.56.0/24 dev customer  proto kernel  scope link  src 172.18.56.22
+169.254.0.0/16 dev customer  scope link  metric 1031
+default via 172.18.56.1 dev customer
+"""
+        response_addr = (""
+"31: customer    inet 172.18.56.22/24 brd 172.18.56.255 scope global"
+" customer\n"
+"31: customer    inet 172.18.56.32/24 brd 172.18.56.255 scope global "
+"secondary customer")
 
-        input = [{'a': 'a_1'}]
-        self.assertEquals(['a_1'], f(input, "a"))
-        self.assertEquals([], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
+        def fake_execute(*args, **kwargs):
+            if 'route' in args:
+                return response_route, None
+            return response_addr, None
 
-        input = [{'a': {'b': 'b_1'}}]
-        self.assertEquals([{'b': 'b_1'}], f(input, "a"))
-        self.assertEquals(['b_1'], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
+        self.stubs.Set(utils, 'execute', fake_execute)
+        address = utils.get_my_ipv4_address()
+        self.assertEqual(address, '172.18.56.22')
 
-        input = [{'a': {'b': {'c': 'c_1'}}}]
-        self.assertEquals([{'b': {'c': 'c_1'}}], f(input, "a"))
-        self.assertEquals([{'c': 'c_1'}], f(input, "a/b"))
-        self.assertEquals(['c_1'], f(input, "a/b/c"))
+    def test_get_my_ipv4_address_with_multiple_interfaces(self):
+        response_route = """
+169.1.9.0/24 dev eth1  proto kernel  scope link  src 169.1.9.10
+172.17.248.0/21 dev eth0  proto kernel  scope link  src 172.17.255.9
+169.254.0.0/16 dev eth0  scope link  metric 1002
+169.254.0.0/16 dev eth1  scope link  metric 1003
+default via 172.17.248.1 dev eth0  proto static
+"""
+        response_addr = """
+1: lo    inet 127.0.0.1/8 scope host lo
+2: eth0    inet 172.17.255.9/21 brd 172.17.255.255 scope global eth0
+3: eth1    inet 169.1.9.10/24 scope global eth1
+"""
 
-        input = [{'a': {'b': {'c': 'c_1'}}}, {'a': None}]
-        self.assertEquals([{'b': {'c': 'c_1'}}], f(input, "a"))
-        self.assertEquals([{'c': 'c_1'}], f(input, "a/b"))
-        self.assertEquals(['c_1'], f(input, "a/b/c"))
+        def fake_execute(*args, **kwargs):
+            if 'route' in args:
+                return response_route, None
+            return response_addr, None
 
-        input = [{'a': {'b': {'c': 'c_1'}}},
-                 {'a': {'b': None}}]
-        self.assertEquals([{'b': {'c': 'c_1'}}, {'b': None}], f(input, "a"))
-        self.assertEquals([{'c': 'c_1'}], f(input, "a/b"))
-        self.assertEquals(['c_1'], f(input, "a/b/c"))
-
-        input = [{'a': {'b': {'c': 'c_1'}}},
-                 {'a': {'b': {'c': 'c_2'}}}]
-        self.assertEquals([{'b': {'c': 'c_1'}}, {'b': {'c': 'c_2'}}],
-                          f(input, "a"))
-        self.assertEquals([{'c': 'c_1'}, {'c': 'c_2'}], f(input, "a/b"))
-        self.assertEquals(['c_1', 'c_2'], f(input, "a/b/c"))
-
-        self.assertEquals([], f(input, "a/b/c/d"))
-        self.assertEquals([], f(input, "c/a/b/d"))
-        self.assertEquals([], f(input, "i/r/t"))
-
-    def test_flattens_lists(self):
-        f = utils.get_from_path
-
-        input = [{'a': [1, 2, 3]}]
-        self.assertEquals([1, 2, 3], f(input, "a"))
-        self.assertEquals([], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
-
-        input = [{'a': {'b': [1, 2, 3]}}]
-        self.assertEquals([{'b': [1, 2, 3]}], f(input, "a"))
-        self.assertEquals([1, 2, 3], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
-
-        input = [{'a': {'b': [1, 2, 3]}}, {'a': {'b': [4, 5, 6]}}]
-        self.assertEquals([1, 2, 3, 4, 5, 6], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
-
-        input = [{'a': [{'b': [1, 2, 3]}, {'b': [4, 5, 6]}]}]
-        self.assertEquals([1, 2, 3, 4, 5, 6], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
-
-        input = [{'a': [1, 2, {'b': 'b_1'}]}]
-        self.assertEquals([1, 2, {'b': 'b_1'}], f(input, "a"))
-        self.assertEquals(['b_1'], f(input, "a/b"))
-
-    def test_bad_xpath(self):
-        f = utils.get_from_path
-
-        self.assertRaises(exception.NovaException, f, [], None)
-        self.assertRaises(exception.NovaException, f, [], "")
-        self.assertRaises(exception.NovaException, f, [], "/")
-        self.assertRaises(exception.NovaException, f, [], "/a")
-        self.assertRaises(exception.NovaException, f, [], "/a/")
-        self.assertRaises(exception.NovaException, f, [], "//")
-        self.assertRaises(exception.NovaException, f, [], "//a")
-        self.assertRaises(exception.NovaException, f, [], "a//a")
-        self.assertRaises(exception.NovaException, f, [], "a//a/")
-        self.assertRaises(exception.NovaException, f, [], "a/a/")
-
-    def test_real_failure1(self):
-        # Real world failure case...
-        #  We weren't coping when the input was a Dictionary instead of a List
-        # This led to test_accepts_dictionaries
-        f = utils.get_from_path
-
-        inst = {'fixed_ip': {'floating_ips': [{'address': '1.2.3.4'}],
-                             'address': '192.168.0.3'},
-                'hostname': ''}
-
-        private_ips = f(inst, 'fixed_ip/address')
-        public_ips = f(inst, 'fixed_ip/floating_ips/address')
-        self.assertEquals(['192.168.0.3'], private_ips)
-        self.assertEquals(['1.2.3.4'], public_ips)
-
-    def test_accepts_dictionaries(self):
-        f = utils.get_from_path
-
-        input = {'a': [1, 2, 3]}
-        self.assertEquals([1, 2, 3], f(input, "a"))
-        self.assertEquals([], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
-
-        input = {'a': {'b': [1, 2, 3]}}
-        self.assertEquals([{'b': [1, 2, 3]}], f(input, "a"))
-        self.assertEquals([1, 2, 3], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
-
-        input = {'a': [{'b': [1, 2, 3]}, {'b': [4, 5, 6]}]}
-        self.assertEquals([1, 2, 3, 4, 5, 6], f(input, "a/b"))
-        self.assertEquals([], f(input, "a/b/c"))
-
-        input = {'a': [1, 2, {'b': 'b_1'}]}
-        self.assertEquals([1, 2, {'b': 'b_1'}], f(input, "a"))
-        self.assertEquals(['b_1'], f(input, "a/b"))
+        self.stubs.Set(utils, 'execute', fake_execute)
+        address = utils.get_my_ipv4_address()
+        self.assertEqual(address, '172.17.255.9')
 
 
-class GenericUtilsTestCase(test.TestCase):
+class GenericUtilsTestCase(test.NoDBTestCase):
     def test_parse_server_string(self):
         result = utils.parse_server_string('::1')
         self.assertEqual(('::1', ''), result)
@@ -324,24 +172,6 @@ class GenericUtilsTestCase(test.TestCase):
     def test_hostname_translate(self):
         hostname = "<}\x1fh\x10e\x08l\x02l\x05o\x12!{>"
         self.assertEqual("hello", utils.sanitize_hostname(hostname))
-
-    def test_bool_from_str(self):
-        self.assertTrue(utils.bool_from_str('1'))
-        self.assertTrue(utils.bool_from_str('2'))
-        self.assertTrue(utils.bool_from_str('-1'))
-        self.assertTrue(utils.bool_from_str('true'))
-        self.assertTrue(utils.bool_from_str('True'))
-        self.assertTrue(utils.bool_from_str('tRuE'))
-        self.assertFalse(utils.bool_from_str('False'))
-        self.assertFalse(utils.bool_from_str('false'))
-        self.assertFalse(utils.bool_from_str('0'))
-        self.assertFalse(utils.bool_from_str(None))
-        self.assertFalse(utils.bool_from_str('junk'))
-
-    def test_generate_glance_url(self):
-        generated_url = utils.generate_glance_url()
-        actual_url = "http://%s:%d" % (FLAGS.glance_host, FLAGS.glance_port)
-        self.assertEqual(generated_url, actual_url)
 
     def test_read_cached_file(self):
         self.mox.StubOutWithMock(os.path, "getmtime")
@@ -392,7 +222,7 @@ class GenericUtilsTestCase(test.TestCase):
     def test_read_file_as_root(self):
         def fake_execute(*args, **kwargs):
             if args[1] == 'bad':
-                raise exception.ProcessExecutionError
+                raise processutils.ProcessExecutionError()
             return 'fakecontents', None
 
         self.stubs.Set(utils, 'execute', fake_execute)
@@ -400,11 +230,6 @@ class GenericUtilsTestCase(test.TestCase):
         self.assertEqual(contents, 'fakecontents')
         self.assertRaises(exception.FileNotFound,
                           utils.read_file_as_root, 'bad')
-
-    def test_strcmp_const_time(self):
-        self.assertTrue(utils.strcmp_const_time('abc123', 'abc123'))
-        self.assertFalse(utils.strcmp_const_time('a', 'aaaaa'))
-        self.assertFalse(utils.strcmp_const_time('ABC123', 'abc123'))
 
     def test_temporary_chown(self):
         def fake_execute(*args, **kwargs):
@@ -417,78 +242,91 @@ class GenericUtilsTestCase(test.TestCase):
                 self.assertEqual(fake_execute.uid, 2)
             self.assertEqual(fake_execute.uid, os.getuid())
 
-    def test_service_is_up(self):
-        fts_func = datetime.datetime.fromtimestamp
-        fake_now = 1000
-        down_time = 5
-
-        self.flags(service_down_time=down_time)
-        self.mox.StubOutWithMock(timeutils, 'utcnow')
-
-        # Up (equal)
-        timeutils.utcnow().AndReturn(fts_func(fake_now))
-        service = {'updated_at': fts_func(fake_now - down_time),
-                   'created_at': fts_func(fake_now - down_time)}
-        self.mox.ReplayAll()
-        result = utils.service_is_up(service)
-        self.assertTrue(result)
-
-        self.mox.ResetAll()
-        # Up
-        timeutils.utcnow().AndReturn(fts_func(fake_now))
-        service = {'updated_at': fts_func(fake_now - down_time + 1),
-                   'created_at': fts_func(fake_now - down_time + 1)}
-        self.mox.ReplayAll()
-        result = utils.service_is_up(service)
-        self.assertTrue(result)
-
-        self.mox.ResetAll()
-        # Down
-        timeutils.utcnow().AndReturn(fts_func(fake_now))
-        service = {'updated_at': fts_func(fake_now - down_time - 1),
-                   'created_at': fts_func(fake_now - down_time - 1)}
-        self.mox.ReplayAll()
-        result = utils.service_is_up(service)
-        self.assertFalse(result)
-
     def test_xhtml_escape(self):
         self.assertEqual('&quot;foo&quot;', utils.xhtml_escape('"foo"'))
         self.assertEqual('&apos;foo&apos;', utils.xhtml_escape("'foo'"))
+        self.assertEqual('&amp;', utils.xhtml_escape('&'))
+        self.assertEqual('&gt;', utils.xhtml_escape('>'))
+        self.assertEqual('&lt;', utils.xhtml_escape('<'))
+        self.assertEqual('&lt;foo&gt;', utils.xhtml_escape('<foo>'))
 
-    def test_hash_file(self):
-        data = 'Mary had a little lamb, its fleece as white as snow'
-        flo = StringIO.StringIO(data)
-        h1 = utils.hash_file(flo)
-        h2 = hashlib.sha1(data).hexdigest()
-        self.assertEquals(h1, h2)
+    def test_is_valid_ipv4(self):
+        self.assertTrue(utils.is_valid_ipv4('127.0.0.1'))
+        self.assertFalse(utils.is_valid_ipv4('::1'))
+        self.assertFalse(utils.is_valid_ipv4('bacon'))
+        self.assertFalse(utils.is_valid_ipv4(""))
+        self.assertFalse(utils.is_valid_ipv4(10))
+
+    def test_is_valid_ipv6(self):
+        self.assertTrue(utils.is_valid_ipv6("::1"))
+        self.assertTrue(utils.is_valid_ipv6(
+                            "abcd:ef01:2345:6789:abcd:ef01:192.168.254.254"))
+        self.assertTrue(utils.is_valid_ipv6(
+                                    "0000:0000:0000:0000:0000:0000:0000:0001"))
+        self.assertFalse(utils.is_valid_ipv6("foo"))
+        self.assertFalse(utils.is_valid_ipv6("127.0.0.1"))
+        self.assertFalse(utils.is_valid_ipv6(""))
+        self.assertFalse(utils.is_valid_ipv6(10))
+
+    def test_is_valid_ipv6_cidr(self):
+        self.assertTrue(utils.is_valid_ipv6_cidr("2600::/64"))
+        self.assertTrue(utils.is_valid_ipv6_cidr(
+                "abcd:ef01:2345:6789:abcd:ef01:192.168.254.254/48"))
+        self.assertTrue(utils.is_valid_ipv6_cidr(
+                "0000:0000:0000:0000:0000:0000:0000:0001/32"))
+        self.assertTrue(utils.is_valid_ipv6_cidr(
+                "0000:0000:0000:0000:0000:0000:0000:0001"))
+        self.assertFalse(utils.is_valid_ipv6_cidr("foo"))
+        self.assertFalse(utils.is_valid_ipv6_cidr("127.0.0.1"))
+
+    def test_get_shortened_ipv6(self):
+        self.assertEqual("abcd:ef01:2345:6789:abcd:ef01:c0a8:fefe",
+                         utils.get_shortened_ipv6(
+                            "abcd:ef01:2345:6789:abcd:ef01:192.168.254.254"))
+        self.assertEqual("::1", utils.get_shortened_ipv6(
+                                    "0000:0000:0000:0000:0000:0000:0000:0001"))
+        self.assertEqual("caca::caca:0:babe:201:102",
+                         utils.get_shortened_ipv6(
+                                    "caca:0000:0000:caca:0000:babe:0201:0102"))
+        self.assertRaises(netaddr.AddrFormatError, utils.get_shortened_ipv6,
+                          "127.0.0.1")
+        self.assertRaises(netaddr.AddrFormatError, utils.get_shortened_ipv6,
+                          "failure")
+
+    def test_get_shortened_ipv6_cidr(self):
+        self.assertEqual("2600::/64", utils.get_shortened_ipv6_cidr(
+                "2600:0000:0000:0000:0000:0000:0000:0000/64"))
+        self.assertEqual("2600::/64", utils.get_shortened_ipv6_cidr(
+                "2600::1/64"))
+        self.assertRaises(netaddr.AddrFormatError,
+                          utils.get_shortened_ipv6_cidr,
+                          "127.0.0.1")
+        self.assertRaises(netaddr.AddrFormatError,
+                          utils.get_shortened_ipv6_cidr,
+                          "failure")
+
+    def test_get_hash_str(self):
+        base_str = "foo"
+        value = hashlib.md5(base_str).hexdigest()
+        self.assertEqual(
+            value, utils.get_hash_str(base_str))
+
+    def test_cpu_count(self):
+        def fake_cpu_count():
+            return 8
+        self.stubs.Set(multiprocessing, 'cpu_count', fake_cpu_count)
+
+        self.assertEqual(8, utils.cpu_count())
+
+    def test_cpu_count_not_implemented_returns_1(self):
+        def fake_cpu_count():
+            raise NotImplementedError()
+        self.stubs.Set(multiprocessing, 'cpu_count', fake_cpu_count)
+
+        self.assertEqual(1, utils.cpu_count())
 
 
-class IsUUIDLikeTestCase(test.TestCase):
-    def assertUUIDLike(self, val, expected):
-        result = utils.is_uuid_like(val)
-        self.assertEqual(result, expected)
-
-    def test_good_uuid(self):
-        val = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
-        self.assertUUIDLike(val, True)
-
-    def test_integer_passed(self):
-        val = 1
-        self.assertUUIDLike(val, False)
-
-    def test_non_uuid_string_passed(self):
-        val = 'foo-fooo'
-        self.assertUUIDLike(val, False)
-
-    def test_non_uuid_string_passed2(self):
-        val = 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
-        self.assertUUIDLike(val, False)
-
-    def test_gen_valid_uuid(self):
-        self.assertUUIDLike(str(utils.gen_uuid()), True)
-
-
-class MonkeyPatchTestCase(test.TestCase):
+class MonkeyPatchTestCase(test.NoDBTestCase):
     """Unit test for utils.monkey_patch()."""
     def setUp(self):
         super(MonkeyPatchTestCase, self).setUp()
@@ -533,36 +371,30 @@ class MonkeyPatchTestCase(test.TestCase):
             in nova.tests.monkey_patch_example.CALLED_FUNCTION)
 
 
-class TestFileLocks(test.TestCase):
-    def test_concurrent_green_lock_succeeds(self):
-        """Verify spawn_n greenthreads with two locks run concurrently."""
-        self.completed = False
-        with utils.tempdir() as tmpdir:
+class MonkeyPatchDefaultTestCase(test.NoDBTestCase):
+    """Unit test for default monkey_patch_modules value."""
 
-            def locka(wait):
-                a = utils.InterProcessLock(os.path.join(tmpdir, 'a'))
-                with a:
-                    wait.wait()
-                self.completed = True
+    def setUp(self):
+        super(MonkeyPatchDefaultTestCase, self).setUp()
+        self.flags(
+            monkey_patch=True)
 
-            def lockb(wait):
-                b = utils.InterProcessLock(os.path.join(tmpdir, 'b'))
-                with b:
-                    wait.wait()
-
-            wait1 = eventlet.event.Event()
-            wait2 = eventlet.event.Event()
-            pool = greenpool.GreenPool()
-            pool.spawn_n(locka, wait1)
-            pool.spawn_n(lockb, wait2)
-            wait2.send()
-            eventlet.sleep(0)
-            wait1.send()
-            pool.waitall()
-        self.assertTrue(self.completed)
+    def test_monkey_patch_default_mod(self):
+        # monkey_patch_modules is defined to be
+        #    <module_to_patch>:<decorator_to_patch_with>
+        #  Here we check that both parts of the default values are
+        # valid
+        for module in CONF.monkey_patch_modules:
+            m = module.split(':', 1)
+            # Check we can import the module to be patched
+            importlib.import_module(m[0])
+            # check the decorator is valid
+            decorator_name = m[1].rsplit('.', 1)
+            decorator_module = importlib.import_module(decorator_name[0])
+            getattr(decorator_module, decorator_name[1])
 
 
-class AuditPeriodTest(test.TestCase):
+class AuditPeriodTest(test.NoDBTestCase):
 
     def setUp(self):
         super(AuditPeriodTest, self).setUp()
@@ -581,12 +413,12 @@ class AuditPeriodTest(test.TestCase):
 
     def test_hour(self):
         begin, end = utils.last_completed_audit_period(unit='hour')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            hour=7,
                                            day=5,
                                            month=3,
                                            year=2012))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            hour=8,
                                            day=5,
                                            month=3,
@@ -594,13 +426,13 @@ class AuditPeriodTest(test.TestCase):
 
     def test_hour_with_offset_before_current(self):
         begin, end = utils.last_completed_audit_period(unit='hour@10')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            minute=10,
                                            hour=7,
                                            day=5,
                                            month=3,
                                            year=2012))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            minute=10,
                                            hour=8,
                                            day=5,
@@ -609,13 +441,13 @@ class AuditPeriodTest(test.TestCase):
 
     def test_hour_with_offset_after_current(self):
         begin, end = utils.last_completed_audit_period(unit='hour@30')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            minute=30,
                                            hour=6,
                                            day=5,
                                            month=3,
                                            year=2012))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            minute=30,
                                            hour=7,
                                            day=5,
@@ -624,23 +456,23 @@ class AuditPeriodTest(test.TestCase):
 
     def test_day(self):
         begin, end = utils.last_completed_audit_period(unit='day')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            day=4,
                                            month=3,
                                            year=2012))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            day=5,
                                            month=3,
                                            year=2012))
 
     def test_day_with_offset_before_current(self):
         begin, end = utils.last_completed_audit_period(unit='day@6')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            hour=6,
                                            day=4,
                                            month=3,
                                            year=2012))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            hour=6,
                                            day=5,
                                            month=3,
@@ -648,12 +480,12 @@ class AuditPeriodTest(test.TestCase):
 
     def test_day_with_offset_after_current(self):
         begin, end = utils.last_completed_audit_period(unit='day@10')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            hour=10,
                                            day=3,
                                            month=3,
                                            year=2012))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            hour=10,
                                            day=4,
                                            month=3,
@@ -661,98 +493,445 @@ class AuditPeriodTest(test.TestCase):
 
     def test_month(self):
         begin, end = utils.last_completed_audit_period(unit='month')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            day=1,
                                            month=2,
                                            year=2012))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            day=1,
                                            month=3,
                                            year=2012))
 
     def test_month_with_offset_before_current(self):
         begin, end = utils.last_completed_audit_period(unit='month@2')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            day=2,
                                            month=2,
                                            year=2012))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            day=2,
                                            month=3,
                                            year=2012))
 
     def test_month_with_offset_after_current(self):
         begin, end = utils.last_completed_audit_period(unit='month@15')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            day=15,
                                            month=1,
                                            year=2012))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            day=15,
                                            month=2,
                                            year=2012))
 
     def test_year(self):
         begin, end = utils.last_completed_audit_period(unit='year')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            day=1,
                                            month=1,
                                            year=2011))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            day=1,
                                            month=1,
                                            year=2012))
 
     def test_year_with_offset_before_current(self):
         begin, end = utils.last_completed_audit_period(unit='year@2')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            day=1,
                                            month=2,
                                            year=2011))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            day=1,
                                            month=2,
                                            year=2012))
 
     def test_year_with_offset_after_current(self):
         begin, end = utils.last_completed_audit_period(unit='year@6')
-        self.assertEquals(begin, datetime.datetime(
+        self.assertEqual(begin, datetime.datetime(
                                            day=1,
                                            month=6,
                                            year=2010))
-        self.assertEquals(end, datetime.datetime(
+        self.assertEqual(end, datetime.datetime(
                                            day=1,
                                            month=6,
                                            year=2011))
 
 
-class DiffDict(test.TestCase):
-    """Unit tests for diff_dict()"""
+class MkfsTestCase(test.NoDBTestCase):
 
-    def test_no_change(self):
-        old = dict(a=1, b=2, c=3)
-        new = dict(a=1, b=2, c=3)
-        diff = utils.diff_dict(old, new)
+    def test_mkfs(self):
+        self.mox.StubOutWithMock(utils, 'execute')
+        utils.execute('mkfs', '-t', 'ext4', '-F', '/my/block/dev',
+                      run_as_root=False)
+        utils.execute('mkfs', '-t', 'msdos', '/my/msdos/block/dev',
+                      run_as_root=False)
+        utils.execute('mkswap', '/my/swap/block/dev',
+                      run_as_root=False)
+        self.mox.ReplayAll()
 
-        self.assertEqual(diff, {})
+        utils.mkfs('ext4', '/my/block/dev')
+        utils.mkfs('msdos', '/my/msdos/block/dev')
+        utils.mkfs('swap', '/my/swap/block/dev')
 
-    def test_new_key(self):
-        old = dict(a=1, b=2, c=3)
-        new = dict(a=1, b=2, c=3, d=4)
-        diff = utils.diff_dict(old, new)
+    def test_mkfs_with_label(self):
+        self.mox.StubOutWithMock(utils, 'execute')
+        utils.execute('mkfs', '-t', 'ext4', '-F',
+                      '-L', 'ext4-vol', '/my/block/dev', run_as_root=False)
+        utils.execute('mkfs', '-t', 'msdos',
+                      '-n', 'msdos-vol', '/my/msdos/block/dev',
+                      run_as_root=False)
+        utils.execute('mkswap', '-L', 'swap-vol', '/my/swap/block/dev',
+                      run_as_root=False)
+        self.mox.ReplayAll()
 
-        self.assertEqual(diff, dict(d=['+', 4]))
+        utils.mkfs('ext4', '/my/block/dev', 'ext4-vol')
+        utils.mkfs('msdos', '/my/msdos/block/dev', 'msdos-vol')
+        utils.mkfs('swap', '/my/swap/block/dev', 'swap-vol')
 
-    def test_changed_key(self):
-        old = dict(a=1, b=2, c=3)
-        new = dict(a=1, b=4, c=3)
-        diff = utils.diff_dict(old, new)
 
-        self.assertEqual(diff, dict(b=['+', 4]))
+class LastBytesTestCase(test.NoDBTestCase):
+    """Test the last_bytes() utility method."""
 
-    def test_removed_key(self):
-        old = dict(a=1, b=2, c=3)
-        new = dict(a=1, c=3)
-        diff = utils.diff_dict(old, new)
+    def setUp(self):
+        super(LastBytesTestCase, self).setUp()
+        self.f = StringIO.StringIO('1234567890')
 
-        self.assertEqual(diff, dict(b=['-']))
+    def test_truncated(self):
+        self.f.seek(0, os.SEEK_SET)
+        out, remaining = utils.last_bytes(self.f, 5)
+        self.assertEqual(out, '67890')
+        self.assertTrue(remaining > 0)
+
+    def test_read_all(self):
+        self.f.seek(0, os.SEEK_SET)
+        out, remaining = utils.last_bytes(self.f, 1000)
+        self.assertEqual(out, '1234567890')
+        self.assertFalse(remaining > 0)
+
+    def test_seek_too_far_real_file(self):
+        # StringIO doesn't raise IOError if you see past the start of the file.
+        flo = tempfile.TemporaryFile()
+        content = '1234567890'
+        flo.write(content)
+        self.assertEqual((content, 0), utils.last_bytes(flo, 1000))
+
+
+class IntLikeTestCase(test.NoDBTestCase):
+
+    def test_is_int_like(self):
+        self.assertTrue(utils.is_int_like(1))
+        self.assertTrue(utils.is_int_like("1"))
+        self.assertTrue(utils.is_int_like("514"))
+        self.assertTrue(utils.is_int_like("0"))
+
+        self.assertFalse(utils.is_int_like(1.1))
+        self.assertFalse(utils.is_int_like("1.1"))
+        self.assertFalse(utils.is_int_like("1.1.1"))
+        self.assertFalse(utils.is_int_like(None))
+        self.assertFalse(utils.is_int_like("0."))
+        self.assertFalse(utils.is_int_like("aaaaaa"))
+        self.assertFalse(utils.is_int_like("...."))
+        self.assertFalse(utils.is_int_like("1g"))
+        self.assertFalse(
+            utils.is_int_like("0cc3346e-9fef-4445-abe6-5d2b2690ec64"))
+        self.assertFalse(utils.is_int_like("a1"))
+
+
+class MetadataToDictTestCase(test.NoDBTestCase):
+    def test_metadata_to_dict(self):
+        self.assertEqual(utils.metadata_to_dict(
+                [{'key': 'foo1', 'value': 'bar'},
+                 {'key': 'foo2', 'value': 'baz'}]),
+                         {'foo1': 'bar', 'foo2': 'baz'})
+
+    def test_metadata_to_dict_empty(self):
+        self.assertEqual(utils.metadata_to_dict([]), {})
+
+    def test_dict_to_metadata(self):
+        expected = [{'key': 'foo1', 'value': 'bar1'},
+                    {'key': 'foo2', 'value': 'bar2'}]
+        self.assertEqual(utils.dict_to_metadata(dict(foo1='bar1',
+                                                     foo2='bar2')),
+                         expected)
+
+    def test_dict_to_metadata_empty(self):
+        self.assertEqual(utils.dict_to_metadata({}), [])
+
+
+class WrappedCodeTestCase(test.NoDBTestCase):
+    """Test the get_wrapped_function utility method."""
+
+    def _wrapper(self, function):
+        @functools.wraps(function)
+        def decorated_function(self, *args, **kwargs):
+            function(self, *args, **kwargs)
+        return decorated_function
+
+    def test_single_wrapped(self):
+        @self._wrapper
+        def wrapped(self, instance, red=None, blue=None):
+            pass
+
+        func = utils.get_wrapped_function(wrapped)
+        func_code = func.func_code
+        self.assertEqual(4, len(func_code.co_varnames))
+        self.assertIn('self', func_code.co_varnames)
+        self.assertIn('instance', func_code.co_varnames)
+        self.assertIn('red', func_code.co_varnames)
+        self.assertIn('blue', func_code.co_varnames)
+
+    def test_double_wrapped(self):
+        @self._wrapper
+        @self._wrapper
+        def wrapped(self, instance, red=None, blue=None):
+            pass
+
+        func = utils.get_wrapped_function(wrapped)
+        func_code = func.func_code
+        self.assertEqual(4, len(func_code.co_varnames))
+        self.assertIn('self', func_code.co_varnames)
+        self.assertIn('instance', func_code.co_varnames)
+        self.assertIn('red', func_code.co_varnames)
+        self.assertIn('blue', func_code.co_varnames)
+
+    def test_triple_wrapped(self):
+        @self._wrapper
+        @self._wrapper
+        @self._wrapper
+        def wrapped(self, instance, red=None, blue=None):
+            pass
+
+        func = utils.get_wrapped_function(wrapped)
+        func_code = func.func_code
+        self.assertEqual(4, len(func_code.co_varnames))
+        self.assertIn('self', func_code.co_varnames)
+        self.assertIn('instance', func_code.co_varnames)
+        self.assertIn('red', func_code.co_varnames)
+        self.assertIn('blue', func_code.co_varnames)
+
+
+class StringLengthTestCase(test.NoDBTestCase):
+    def test_check_string_length(self):
+        self.assertIsNone(utils.check_string_length(
+                          'test', 'name', max_length=255))
+        self.assertRaises(exception.InvalidInput,
+                          utils.check_string_length,
+                          11, 'name', max_length=255)
+        self.assertRaises(exception.InvalidInput,
+                          utils.check_string_length,
+                          '', 'name', min_length=1)
+        self.assertRaises(exception.InvalidInput,
+                          utils.check_string_length,
+                          'a' * 256, 'name', max_length=255)
+
+
+class ValidateIntegerTestCase(test.NoDBTestCase):
+    def test_valid_inputs(self):
+        self.assertEqual(
+            utils.validate_integer(42, "answer"), 42)
+        self.assertEqual(
+            utils.validate_integer("42", "answer"), 42)
+        self.assertEqual(
+            utils.validate_integer(
+                "7", "lucky", min_value=7, max_value=8), 7)
+        self.assertEqual(
+            utils.validate_integer(
+                7, "lucky", min_value=6, max_value=7), 7)
+        self.assertEqual(
+            utils.validate_integer(
+                300, "Spartaaa!!!", min_value=300), 300)
+        self.assertEqual(
+            utils.validate_integer(
+                "300", "Spartaaa!!!", max_value=300), 300)
+
+    def test_invalid_inputs(self):
+        self.assertRaises(exception.InvalidInput,
+                          utils.validate_integer,
+                          "im-not-an-int", "not-an-int")
+        self.assertRaises(exception.InvalidInput,
+                          utils.validate_integer,
+                          3.14, "Pie")
+        self.assertRaises(exception.InvalidInput,
+                          utils.validate_integer,
+                          "299", "Sparta no-show",
+                          min_value=300, max_value=300)
+        self.assertRaises(exception.InvalidInput,
+                          utils.validate_integer,
+                          55, "doing 55 in a 54",
+                          max_value=54)
+        self.assertRaises(exception.InvalidInput,
+                          utils.validate_integer,
+                          unichr(129), "UnicodeError",
+                          max_value=1000)
+
+
+class ValidateNeutronConfiguration(test.NoDBTestCase):
+    def setUp(self):
+        super(ValidateNeutronConfiguration, self).setUp()
+        utils.reset_is_neutron()
+
+    def test_nova_network(self):
+        self.flags(network_api_class='nova.network.api.API')
+        self.assertFalse(utils.is_neutron())
+
+    def test_neutron(self):
+        self.flags(network_api_class='nova.network.neutronv2.api.API')
+        self.assertTrue(utils.is_neutron())
+
+    def test_quantum(self):
+        self.flags(network_api_class='nova.network.quantumv2.api.API')
+        self.assertTrue(utils.is_neutron())
+
+
+class AutoDiskConfigUtilTestCase(test.NoDBTestCase):
+    def test_is_auto_disk_config_disabled(self):
+        self.assertTrue(utils.is_auto_disk_config_disabled("Disabled "))
+
+    def test_is_auto_disk_config_disabled_none(self):
+        self.assertFalse(utils.is_auto_disk_config_disabled(None))
+
+    def test_is_auto_disk_config_disabled_false(self):
+        self.assertFalse(utils.is_auto_disk_config_disabled("false"))
+
+
+class GetSystemMetadataFromImageTestCase(test.NoDBTestCase):
+    def get_image(self):
+        image_meta = {
+            "id": "fake-image",
+            "name": "fake-name",
+            "min_ram": 1,
+            "min_disk": 1,
+            "disk_format": "raw",
+            "container_format": "bare",
+        }
+
+        return image_meta
+
+    def get_flavor(self):
+        flavor = {
+            "id": "fake.flavor",
+            "root_gb": 10,
+        }
+
+        return flavor
+
+    def test_base_image_properties(self):
+        image = self.get_image()
+
+        # Verify that we inherit all the needed keys
+        sys_meta = utils.get_system_metadata_from_image(image)
+        for key in utils.SM_INHERITABLE_KEYS:
+            sys_key = "%s%s" % (utils.SM_IMAGE_PROP_PREFIX, key)
+            self.assertEqual(image[key], sys_meta.get(sys_key))
+
+        # Verify that everything else is ignored
+        self.assertEqual(len(sys_meta), len(utils.SM_INHERITABLE_KEYS))
+
+    def test_inherit_image_properties(self):
+        image = self.get_image()
+        image["properties"] = {"foo1": "bar", "foo2": "baz"}
+
+        sys_meta = utils.get_system_metadata_from_image(image)
+
+        # Verify that we inherit all the image properties
+        for key, expected in image["properties"].iteritems():
+            sys_key = "%s%s" % (utils.SM_IMAGE_PROP_PREFIX, key)
+            self.assertEqual(sys_meta[sys_key], expected)
+
+    def test_vhd_min_disk_image(self):
+        image = self.get_image()
+        flavor = self.get_flavor()
+
+        image["disk_format"] = "vhd"
+
+        sys_meta = utils.get_system_metadata_from_image(image, flavor)
+
+        # Verify that the min_disk property is taken from
+        # flavor's root_gb when using vhd disk format
+        sys_key = "%s%s" % (utils.SM_IMAGE_PROP_PREFIX, "min_disk")
+        self.assertEqual(sys_meta[sys_key], flavor["root_gb"])
+
+    def test_dont_inherit_empty_values(self):
+        image = self.get_image()
+
+        for key in utils.SM_INHERITABLE_KEYS:
+            image[key] = None
+
+        sys_meta = utils.get_system_metadata_from_image(image)
+
+        # Verify that the empty properties have not been inherited
+        for key in utils.SM_INHERITABLE_KEYS:
+            sys_key = "%s%s" % (utils.SM_IMAGE_PROP_PREFIX, key)
+            self.assertNotIn(sys_key, sys_meta)
+
+
+class GetImageFromSystemMetadataTestCase(test.NoDBTestCase):
+    def get_system_metadata(self):
+        sys_meta = {
+            "image_min_ram": 1,
+            "image_min_disk": 1,
+            "image_disk_format": "raw",
+            "image_container_format": "bare",
+        }
+
+        return sys_meta
+
+    def test_image_from_system_metadata(self):
+        sys_meta = self.get_system_metadata()
+        sys_meta["%soo1" % utils.SM_IMAGE_PROP_PREFIX] = "bar"
+        sys_meta["%soo2" % utils.SM_IMAGE_PROP_PREFIX] = "baz"
+
+        image = utils.get_image_from_system_metadata(sys_meta)
+
+        # Verify that we inherit all the needed keys
+        for key in utils.SM_INHERITABLE_KEYS:
+            sys_key = "%s%s" % (utils.SM_IMAGE_PROP_PREFIX, key)
+            self.assertEqual(image[key], sys_meta.get(sys_key))
+
+        # Verify that we inherit the rest of metadata as properties
+        self.assertIn("properties", image)
+
+        for key, value in image["properties"].iteritems():
+            sys_key = "%s%s" % (utils.SM_IMAGE_PROP_PREFIX, key)
+            self.assertEqual(image["properties"][key], sys_meta[sys_key])
+
+    def test_dont_inherit_empty_values(self):
+        sys_meta = self.get_system_metadata()
+
+        for key in utils.SM_INHERITABLE_KEYS:
+            sys_key = "%s%s" % (utils.SM_IMAGE_PROP_PREFIX, key)
+            sys_meta[sys_key] = None
+
+        image = utils.get_image_from_system_metadata(sys_meta)
+
+        # Verify that the empty properties have not been inherited
+        for key in utils.SM_INHERITABLE_KEYS:
+            self.assertNotIn(key, image)
+
+    def test_non_inheritable_image_properties(self):
+        sys_meta = self.get_system_metadata()
+        sys_meta["%soo1" % utils.SM_IMAGE_PROP_PREFIX] = "bar"
+
+        CONF.non_inheritable_image_properties = ["foo1"]
+
+        image = utils.get_image_from_system_metadata(sys_meta)
+
+        # Verify that the foo1 key has not been inherited
+        self.assertNotIn("foo1", image)
+
+
+class VersionTestCase(test.NoDBTestCase):
+    def test_convert_version_to_int(self):
+        self.assertEqual(utils.convert_version_to_int('6.2.0'), 6002000)
+        self.assertEqual(utils.convert_version_to_int((6, 4, 3)), 6004003)
+        self.assertEqual(utils.convert_version_to_int((5, )), 5)
+        self.assertRaises(exception.NovaException,
+                          utils.convert_version_to_int, '5a.6b')
+
+    def test_convert_version_to_string(self):
+        self.assertEqual(utils.convert_version_to_str(6007000), '6.7.0')
+        self.assertEqual(utils.convert_version_to_str(4), '4')
+
+    def test_convert_version_to_tuple(self):
+        self.assertEqual(utils.convert_version_to_tuple('6.7.0'), (6, 7, 0))

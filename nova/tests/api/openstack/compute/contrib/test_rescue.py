@@ -1,4 +1,4 @@
-#   Copyright 2011 OpenStack LLC.
+#   Copyright 2011 OpenStack Foundation
 #
 #   Licensed under the Apache License, Version 2.0 (the "License"); you may
 #   not use this file except in compliance with the License. You may obtain
@@ -12,16 +12,17 @@
 #   License for the specific language governing permissions and limitations
 #   under the License.
 
+from oslo.config import cfg
 import webob
 
 from nova import compute
 from nova import exception
-from nova import flags
 from nova.openstack.common import jsonutils
 from nova import test
 from nova.tests.api.openstack import fakes
 
-FLAGS = flags.FLAGS
+CONF = cfg.CONF
+CONF.import_opt('password_length', 'nova.utils')
 
 
 def rescue(self, context, instance, rescue_password=None):
@@ -32,7 +33,7 @@ def unrescue(self, context, instance):
     pass
 
 
-class RescueTest(test.TestCase):
+class RescueTest(test.NoDBTestCase):
     def setUp(self):
         super(RescueTest, self).setUp()
 
@@ -43,6 +44,11 @@ class RescueTest(test.TestCase):
         self.stubs.Set(compute.api.API, "get", fake_compute_get)
         self.stubs.Set(compute.api.API, "rescue", rescue)
         self.stubs.Set(compute.api.API, "unrescue", unrescue)
+        self.flags(
+            osapi_compute_extension=[
+                'nova.api.openstack.compute.contrib.select_extensions'],
+            osapi_compute_ext_list=['Rescue'])
+        self.app = fakes.wsgi_app(init_only=('servers',))
 
     def test_rescue_with_preset_password(self):
         body = {"rescue": {"adminPass": "AABBCC112233"}}
@@ -51,7 +57,7 @@ class RescueTest(test.TestCase):
         req.body = jsonutils.dumps(body)
         req.headers["content-type"] = "application/json"
 
-        resp = req.get_response(fakes.wsgi_app())
+        resp = req.get_response(self.app)
         self.assertEqual(resp.status_int, 200)
         resp_json = jsonutils.loads(resp.body)
         self.assertEqual("AABBCC112233", resp_json['adminPass'])
@@ -63,10 +69,10 @@ class RescueTest(test.TestCase):
         req.body = jsonutils.dumps(body)
         req.headers["content-type"] = "application/json"
 
-        resp = req.get_response(fakes.wsgi_app())
+        resp = req.get_response(self.app)
         self.assertEqual(resp.status_int, 200)
         resp_json = jsonutils.loads(resp.body)
-        self.assertEqual(FLAGS.password_length, len(resp_json['adminPass']))
+        self.assertEqual(CONF.password_length, len(resp_json['adminPass']))
 
     def test_rescue_of_rescued_instance(self):
         body = dict(rescue=None)
@@ -80,7 +86,7 @@ class RescueTest(test.TestCase):
         req.body = jsonutils.dumps(body)
         req.headers["content-type"] = "application/json"
 
-        resp = req.get_response(fakes.wsgi_app())
+        resp = req.get_response(self.app)
         self.assertEqual(resp.status_int, 409)
 
     def test_unrescue(self):
@@ -90,7 +96,7 @@ class RescueTest(test.TestCase):
         req.body = jsonutils.dumps(body)
         req.headers["content-type"] = "application/json"
 
-        resp = req.get_response(fakes.wsgi_app())
+        resp = req.get_response(self.app)
         self.assertEqual(resp.status_int, 202)
 
     def test_unrescue_of_active_instance(self):
@@ -105,5 +111,20 @@ class RescueTest(test.TestCase):
         req.body = jsonutils.dumps(body)
         req.headers["content-type"] = "application/json"
 
-        resp = req.get_response(fakes.wsgi_app())
+        resp = req.get_response(self.app)
         self.assertEqual(resp.status_int, 409)
+
+    def test_rescue_raises_unrescuable(self):
+        body = dict(rescue=None)
+
+        def fake_rescue(*args, **kwargs):
+            raise exception.InstanceNotRescuable('fake message')
+
+        self.stubs.Set(compute.api.API, "rescue", fake_rescue)
+        req = webob.Request.blank('/v2/fake/servers/test_inst/action')
+        req.method = "POST"
+        req.body = jsonutils.dumps(body)
+        req.headers["content-type"] = "application/json"
+
+        resp = req.get_response(self.app)
+        self.assertEqual(resp.status_int, 400)

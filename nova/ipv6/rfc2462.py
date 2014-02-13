@@ -17,9 +17,11 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-"""RFC2462 style IPv6 address generation"""
+"""RFC2462 style IPv6 address generation."""
 
 import netaddr
+
+from nova.openstack.common.gettextutils import _
 
 
 def to_global(prefix, mac, project_id):

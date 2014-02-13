@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2010 OpenStack LLC.
+# Copyright 2010 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -17,12 +17,14 @@
 
 import webob
 
-from nova.api.openstack import common
 from nova.api.openstack.compute.views import flavors as flavors_view
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
-from nova.compute import instance_types
+from nova.compute import flavors
 from nova import exception
+from nova.openstack.common.gettextutils import _
+from nova.openstack.common import strutils
+from nova import utils
 
 
 def make_flavor(elem, detailed=False):
@@ -31,9 +33,7 @@ def make_flavor(elem, detailed=False):
     if detailed:
         elem.set('ram')
         elem.set('disk')
-
-        for attr in ("vcpus", "swap", "rxtx_factor"):
-            elem.set(attr, xmlutil.EmptyStringSelector(attr))
+        elem.set('vcpus', xmlutil.EmptyStringSelector('vcpus'))
 
     xmlutil.make_links(elem, 'links')
 
@@ -72,31 +72,58 @@ class Controller(wsgi.Controller):
     @wsgi.serializers(xml=MinimalFlavorsTemplate)
     def index(self, req):
         """Return all flavors in brief."""
-        flavors = self._get_flavors(req)
-        return self._view_builder.index(req, flavors)
+        limited_flavors = self._get_flavors(req)
+        return self._view_builder.index(req, limited_flavors)
 
     @wsgi.serializers(xml=FlavorsTemplate)
     def detail(self, req):
         """Return all flavors in detail."""
-        flavors = self._get_flavors(req)
-        return self._view_builder.detail(req, flavors)
+        limited_flavors = self._get_flavors(req)
+        req.cache_db_flavors(limited_flavors)
+        return self._view_builder.detail(req, limited_flavors)
 
     @wsgi.serializers(xml=FlavorTemplate)
     def show(self, req, id):
         """Return data about the given flavor id."""
         try:
-            flavor = instance_types.get_instance_type_by_flavor_id(id)
+            context = req.environ['nova.context']
+            flavor = flavors.get_flavor_by_flavor_id(id, ctxt=context)
+            req.cache_db_flavor(flavor)
         except exception.NotFound:
             raise webob.exc.HTTPNotFound()
 
         return self._view_builder.show(req, flavor)
 
+    def _parse_is_public(self, is_public):
+        """Parse is_public into something usable."""
+
+        if is_public is None:
+            # preserve default value of showing only public flavors
+            return True
+        elif utils.is_none_string(is_public):
+            return None
+        else:
+            try:
+                return strutils.bool_from_string(is_public, strict=True)
+            except ValueError:
+                msg = _('Invalid is_public filter [%s]') % is_public
+                raise webob.exc.HTTPBadRequest(explanation=msg)
+
     def _get_flavors(self, req):
         """Helper function that returns a list of flavor dicts."""
         filters = {}
+        sort_key = req.params.get('sort_key') or 'flavorid'
+        sort_dir = req.params.get('sort_dir') or 'asc'
+        limit = req.params.get('limit') or None
+        marker = req.params.get('marker') or None
 
         context = req.environ['nova.context']
-        if not context.is_admin:
+        if context.is_admin:
+            # Only admin has query access to all flavor types
+            filters['is_public'] = self._parse_is_public(
+                    req.params.get('is_public', None))
+        else:
+            filters['is_public'] = True
             filters['disabled'] = False
 
         if 'minRam' in req.params:
@@ -113,11 +140,14 @@ class Controller(wsgi.Controller):
                 msg = _('Invalid minDisk filter [%s]') % req.params['minDisk']
                 raise webob.exc.HTTPBadRequest(explanation=msg)
 
-        flavors = instance_types.get_all_types(filters=filters)
-        flavors_list = flavors.values()
-        sorted_flavors = sorted(flavors_list,
-                                key=lambda item: item['flavorid'])
-        limited_flavors = common.limited_by_marker(sorted_flavors, req)
+        try:
+            limited_flavors = flavors.get_all_flavors_sorted_list(context,
+                filters=filters, sort_key=sort_key, sort_dir=sort_dir,
+                limit=limit, marker=marker)
+        except exception.MarkerNotFound:
+            msg = _('marker [%s] not found') % marker
+            raise webob.exc.HTTPBadRequest(explanation=msg)
+
         return limited_flavors
 
 

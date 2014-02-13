@@ -18,49 +18,61 @@
 Unit Tests for nova.console.rpcapi
 """
 
+import contextlib
+
+import mock
+from oslo.config import cfg
+
 from nova.console import rpcapi as console_rpcapi
 from nova import context
-from nova import flags
-from nova.openstack.common import rpc
 from nova import test
 
+CONF = cfg.CONF
 
-FLAGS = flags.FLAGS
 
-
-class ConsoleRpcAPITestCase(test.TestCase):
-
-    def setUp(self):
-        super(ConsoleRpcAPITestCase, self).setUp()
-
-    def tearDown(self):
-        super(ConsoleRpcAPITestCase, self).tearDown()
-
-    def _test_console_api(self, method, **kwargs):
+class ConsoleRpcAPITestCase(test.NoDBTestCase):
+    def _test_console_api(self, method, rpc_method, **kwargs):
         ctxt = context.RequestContext('fake_user', 'fake_project')
+
         rpcapi = console_rpcapi.ConsoleAPI()
-        expected_msg = rpcapi.make_msg(method, **kwargs)
-        expected_msg['version'] = rpcapi.BASE_RPC_API_VERSION
+        self.assertIsNotNone(rpcapi.client)
+        self.assertEqual(rpcapi.client.target.topic, CONF.console_topic)
 
-        self.cast_ctxt = None
-        self.cast_topic = None
-        self.cast_msg = None
+        orig_prepare = rpcapi.client.prepare
+        expected_version = kwargs.pop('version', rpcapi.client.target.version)
 
-        def _fake_cast(_ctxt, _topic, _msg):
-            self.cast_ctxt = _ctxt
-            self.cast_topic = _topic
-            self.cast_msg = _msg
+        with contextlib.nested(
+            mock.patch.object(rpcapi.client, rpc_method),
+            mock.patch.object(rpcapi.client, 'prepare'),
+            mock.patch.object(rpcapi.client, 'can_send_version'),
+        ) as (
+            rpc_mock, prepare_mock, csv_mock
+        ):
+            prepare_mock.return_value = rpcapi.client
+            rpc_mock.return_value = 'foo' if rpc_method == 'call' else None
+            csv_mock.side_effect = (
+                lambda v: orig_prepare(version=v).can_send_version())
 
-        self.stubs.Set(rpc, 'cast', _fake_cast)
+            retval = getattr(rpcapi, method)(ctxt, **kwargs)
+            self.assertEqual(retval, rpc_mock.return_value)
 
-        getattr(rpcapi, method)(ctxt, **kwargs)
-
-        self.assertEqual(self.cast_ctxt, ctxt)
-        self.assertEqual(self.cast_topic, FLAGS.console_topic)
-        self.assertEqual(self.cast_msg, expected_msg)
+            prepare_mock.assert_called_once_with(version=expected_version)
+            rpc_mock.assert_called_once_with(ctxt, method, **kwargs)
 
     def test_add_console(self):
-        self._test_console_api('add_console', instance_id='i')
+        self._test_console_api('add_console', instance_id='i',
+                               rpc_method='cast')
+
+        # NOTE(russellb) Havana compat
+        self.flags(console='havana', group='upgrade_levels')
+        self._test_console_api('add_console', instance_id='i',
+                               rpc_method='cast', version='1.0')
 
     def test_remove_console(self):
-        self._test_console_api('remove_console', console_id='i')
+        self._test_console_api('remove_console', console_id='i',
+                               rpc_method='cast')
+
+        # NOTE(russellb) Havana compat
+        self.flags(console='havana', group='upgrade_levels')
+        self._test_console_api('remove_console', console_id='i',
+                               rpc_method='cast', version='1.0')

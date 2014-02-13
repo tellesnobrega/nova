@@ -2,7 +2,7 @@
 #
 # Copyright 2010 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration.
-# Copyright 2010 OpenStack LLC.
+# Copyright 2010 OpenStack Foundation
 # Copyright 2009 Facebook
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -36,41 +36,42 @@ S3 client with this module::
 
 import bisect
 import datetime
-import hashlib
 import os
 import os.path
 import urllib
 
+from oslo.config import cfg
 import routes
+import six
 import webob
 
-from nova import flags
-from nova.openstack.common import cfg
+from nova.openstack.common import fileutils
+from nova import paths
 from nova import utils
 from nova import wsgi
 
 
 s3_opts = [
     cfg.StrOpt('buckets_path',
-               default='$state_path/buckets',
-               help='path to s3 buckets'),
+               default=paths.state_path_def('buckets'),
+               help='Path to S3 buckets'),
     cfg.StrOpt('s3_listen',
                default="0.0.0.0",
                help='IP address for S3 API to listen'),
     cfg.IntOpt('s3_listen_port',
                default=3333,
-               help='port for s3 api to listen'),
+               help='Port for S3 API to listen'),
 ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(s3_opts)
+CONF = cfg.CONF
+CONF.register_opts(s3_opts)
 
 
 def get_wsgi_server():
     return wsgi.Server("S3 Objectstore",
-                       S3Application(FLAGS.buckets_path),
-                       port=FLAGS.s3_listen_port,
-                       host=FLAGS.s3_listen)
+                       S3Application(CONF.buckets_path),
+                       port=CONF.s3_listen_port,
+                       host=CONF.s3_listen)
 
 
 class S3Application(wsgi.Router):
@@ -93,8 +94,7 @@ class S3Application(wsgi.Router):
         mapper.connect('/{bucket_name}/',
                 controller=lambda *a, **kw: BucketHandler(self)(*a, **kw))
         self.directory = os.path.abspath(root_directory)
-        if not os.path.exists(self.directory):
-            os.makedirs(self.directory)
+        fileutils.ensure_tree(self.directory)
         self.bucket_depth = bucket_depth
         super(S3Application, self).__init__(mapper)
 
@@ -155,6 +155,13 @@ class BaseRequestHandler(object):
     def set_status(self, status_code):
         self.response.status = status_code
 
+    def set_404(self):
+        self.render_xml({"Error": {
+            "Code": "NoSuchKey",
+            "Message": "The resource you requested does not exist"
+            }})
+        self.set_status(404)
+
     def finish(self, body=''):
         self.response.body = utils.utf8(body)
 
@@ -177,7 +184,7 @@ class BaseRequestHandler(object):
         if not parts:
             parts = []
 
-        if isinstance(value, basestring):
+        if isinstance(value, six.string_types):
             parts.append(utils.xhtml_escape(value))
         elif isinstance(value, int) or isinstance(value, long):
             parts.append(str(value))
@@ -198,7 +205,7 @@ class BaseRequestHandler(object):
         if self.application.bucket_depth < 1:
             return os.path.abspath(os.path.join(
                 self.application.directory, bucket, object_name))
-        hash = hashlib.md5(object_name).hexdigest()
+        hash = utils.get_hash_str(object_name)
         path = os.path.abspath(os.path.join(
             self.application.directory, bucket))
         for i in range(self.application.bucket_depth):
@@ -232,8 +239,8 @@ class BucketHandler(BaseRequestHandler):
                                             bucket_name))
         terse = int(self.get_argument("terse", 0))
         if (not path.startswith(self.application.directory) or
-            not os.path.isdir(path)):
-            self.set_status(404)
+                not os.path.isdir(path)):
+            self.set_404()
             return
         object_names = []
         for root, dirs, files in os.walk(path):
@@ -283,18 +290,18 @@ class BucketHandler(BaseRequestHandler):
         path = os.path.abspath(os.path.join(
             self.application.directory, bucket_name))
         if (not path.startswith(self.application.directory) or
-            os.path.exists(path)):
+                os.path.exists(path)):
             self.set_status(403)
             return
-        os.makedirs(path)
+        fileutils.ensure_tree(path)
         self.finish()
 
     def delete(self, bucket_name):
         path = os.path.abspath(os.path.join(
             self.application.directory, bucket_name))
         if (not path.startswith(self.application.directory) or
-            not os.path.isdir(path)):
-            self.set_status(404)
+                not os.path.isdir(path)):
+            self.set_404()
             return
         if len(os.listdir(path)) > 0:
             self.set_status(403)
@@ -309,8 +316,8 @@ class ObjectHandler(BaseRequestHandler):
         object_name = urllib.unquote(object_name)
         path = self._object_path(bucket, object_name)
         if (not path.startswith(self.application.directory) or
-            not os.path.isfile(path)):
-            self.set_status(404)
+                not os.path.isfile(path)):
+            self.set_404()
             return
         info = os.stat(path)
         self.set_header("Content-Type", "application/unknown")
@@ -327,29 +334,28 @@ class ObjectHandler(BaseRequestHandler):
         bucket_dir = os.path.abspath(os.path.join(
             self.application.directory, bucket))
         if (not bucket_dir.startswith(self.application.directory) or
-            not os.path.isdir(bucket_dir)):
-            self.set_status(404)
+                not os.path.isdir(bucket_dir)):
+            self.set_404()
             return
         path = self._object_path(bucket, object_name)
         if not path.startswith(bucket_dir) or os.path.isdir(path):
             self.set_status(403)
             return
         directory = os.path.dirname(path)
-        if not os.path.exists(directory):
-            os.makedirs(directory)
+        fileutils.ensure_tree(directory)
         object_file = open(path, "w")
         object_file.write(self.request.body)
         object_file.close()
         self.set_header('ETag',
-                        '"%s"' % hashlib.md5(self.request.body).hexdigest())
+                        '"%s"' % utils.get_hash_str(self.request.body))
         self.finish()
 
     def delete(self, bucket, object_name):
         object_name = urllib.unquote(object_name)
         path = self._object_path(bucket, object_name)
         if (not path.startswith(self.application.directory) or
-            not os.path.isfile(path)):
-            self.set_status(404)
+                not os.path.isfile(path)):
+            self.set_404()
             return
         os.unlink(path)
         self.set_status(204)

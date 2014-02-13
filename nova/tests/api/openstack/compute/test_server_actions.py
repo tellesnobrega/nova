@@ -1,4 +1,4 @@
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -14,35 +14,54 @@
 #    under the License.
 
 import base64
+import uuid
 
 import mox
+from oslo.config import cfg
 import webob
 
 from nova.api.openstack.compute import servers
+from nova.compute import api as compute_api
 from nova.compute import task_states
 from nova.compute import vm_states
-import nova.db
+from nova import context
+from nova import db
 from nova import exception
-from nova import flags
+from nova.image import glance
+from nova.objects import instance as instance_obj
 from nova.openstack.common import importutils
+from nova.openstack.common import jsonutils
+from nova.openstack.common import uuidutils
 from nova import test
 from nova.tests.api.openstack import fakes
-import nova.tests.image.fake
-from nova import utils
+from nova.tests import fake_block_device
+from nova.tests import fake_instance
+from nova.tests.image import fake
+from nova.tests import matchers
+from nova.tests import utils
 
-
-FLAGS = flags.FLAGS
+CONF = cfg.CONF
+CONF.import_opt('password_length', 'nova.utils')
 FAKE_UUID = fakes.FAKE_UUID
 INSTANCE_IDS = {FAKE_UUID: 1}
 
 
-def return_server_not_found(context, uuid):
+def return_server_not_found(*arg, **kwarg):
     raise exception.NotFound()
 
 
-def instance_update(context, instance_uuid, kwargs):
+def instance_update_and_get_original(context, instance_uuid, values,
+                                     update_cells=True,
+                                     columns_to_join=None,
+                                     ):
     inst = fakes.stub_instance(INSTANCE_IDS[instance_uuid], host='fake_host')
+    inst = dict(inst, **values)
     return (inst, inst)
+
+
+def instance_update(context, instance_uuid, kwargs, update_cells=True):
+    inst = fakes.stub_instance(INSTANCE_IDS[instance_uuid], host='fake_host')
+    return inst
 
 
 class MockSetAdminPassword(object):
@@ -56,21 +75,22 @@ class MockSetAdminPassword(object):
 
 
 class ServerActionsControllerTest(test.TestCase):
+    image_uuid = '76fa36fc-c930-4bf3-8c8a-ea2a2420deb6'
+    image_href = 'http://localhost/v2/fake/images/%s' % image_uuid
 
     def setUp(self):
         super(ServerActionsControllerTest, self).setUp()
 
-        self.stubs.Set(nova.db, 'instance_get_by_uuid',
+        self.stubs.Set(db, 'instance_get_by_uuid',
                        fakes.fake_instance_get(vm_state=vm_states.ACTIVE,
                                                host='fake_host'))
-        self.stubs.Set(nova.db, 'instance_update_and_get_original',
-                       instance_update)
+        self.stubs.Set(db, 'instance_update_and_get_original',
+                       instance_update_and_get_original)
 
         fakes.stub_out_glance(self.stubs)
         fakes.stub_out_nw_api(self.stubs)
-        fakes.stub_out_rate_limiting(self.stubs)
         fakes.stub_out_compute_api_snapshot(self.stubs)
-        nova.tests.image.fake.stub_out_image_service(self.stubs)
+        fake.stub_out_image_service(self.stubs)
         service_class = 'nova.image.glance.GlanceImageService'
         self.service = importutils.import_object(service_class)
         self.sent_to_glance = {}
@@ -81,11 +101,90 @@ class ServerActionsControllerTest(test.TestCase):
         self.url = '/v2/fake/servers/%s/action' % self.uuid
         self._image_href = '155d900f-4e14-4e4c-a73d-069cbf4541e6'
 
-        self.controller = servers.Controller()
+        class FakeExtManager(object):
+            def is_loaded(self, ext):
+                return False
+
+        self.controller = servers.Controller(ext_mgr=FakeExtManager())
+        self.compute_api = self.controller.compute_api
+        self.context = context.RequestContext('fake', 'fake')
+        self.app = fakes.wsgi_app(init_only=('servers',),
+                                  fake_auth_context=self.context)
+
+    def _make_request(self, url, body):
+        req = webob.Request.blank('/v2/fake' + url)
+        req.method = 'POST'
+        req.body = jsonutils.dumps(body)
+        req.content_type = 'application/json'
+        return req.get_response(self.app)
+
+    def _stub_instance_get(self, uuid=None):
+        self.mox.StubOutWithMock(compute_api.API, 'get')
+        if uuid is None:
+            uuid = uuidutils.generate_uuid()
+        instance = fake_instance.fake_db_instance(
+            id=1, uuid=uuid, vm_state=vm_states.ACTIVE, task_state=None)
+        instance = instance_obj.Instance._from_db_object(
+            self.context, instance_obj.Instance(), instance)
+
+        self.compute_api.get(self.context, uuid,
+                             want_objects=True).AndReturn(instance)
+        return instance
+
+    def _test_locked_instance(self, action, method=None, body_map=None,
+                              compute_api_args_map=None):
+        if method is None:
+            method = action
+        if body_map is None:
+            body_map = {}
+        if compute_api_args_map is None:
+            compute_api_args_map = {}
+
+        instance = self._stub_instance_get()
+        args, kwargs = compute_api_args_map.get(action, ((), {}))
+
+        getattr(compute_api.API, method)(self.context, instance,
+                                         *args, **kwargs).AndRaise(
+            exception.InstanceIsLocked(instance_uuid=instance['uuid']))
+
+        self.mox.ReplayAll()
+
+        res = self._make_request('/servers/%s/action' % instance['uuid'],
+                                 {action: body_map.get(action)})
+        self.assertEqual(409, res.status_int)
+        # Do these here instead of tearDown because this method is called
+        # more than once for the same test case
+        self.mox.VerifyAll()
+        self.mox.UnsetStubs()
+
+    def test_actions_with_locked_instance(self):
+        actions = ['resize', 'confirmResize', 'revertResize', 'reboot',
+                   'rebuild']
+
+        method_translations = {'confirmResize': 'confirm_resize',
+                               'revertResize': 'revert_resize'}
+
+        body_map = {'resize': {'flavorRef': '2'},
+                    'reboot': {'type': 'HARD'},
+                    'rebuild': {'imageRef': self.image_uuid,
+                                'adminPass': 'TNc53Dr8s7vw'}}
+
+        args_map = {'resize': (('2'), {}),
+                    'confirmResize': ((), {}),
+                    'reboot': (('HARD',), {}),
+                    'rebuild': ((self.image_uuid, 'TNc53Dr8s7vw'),
+                                {'files_to_inject': None})}
+
+        for action in actions:
+            method = method_translations.get(action)
+            self.mox.StubOutWithMock(compute_api.API, method or action)
+            self._test_locked_instance(action, method=method,
+                                       body_map=body_map,
+                                       compute_api_args_map=args_map)
 
     def test_server_change_password(self):
         mock_method = MockSetAdminPassword()
-        self.stubs.Set(nova.compute.api.API, 'set_admin_password', mock_method)
+        self.stubs.Set(compute_api.API, 'set_admin_password', mock_method)
         body = {'changePassword': {'adminPass': '1234pass'}}
 
         req = fakes.HTTPRequest.blank(self.url)
@@ -100,7 +199,7 @@ class ServerActionsControllerTest(test.TestCase):
         self.flags(enable_instance_password=False)
 
         mock_method = MockSetAdminPassword()
-        self.stubs.Set(nova.compute.api.API, 'set_admin_password', mock_method)
+        self.stubs.Set(compute_api.API, 'set_admin_password', mock_method)
         body = {'changePassword': {'adminPass': '1234pass'}}
 
         req = fakes.HTTPRequest.blank(self.url)
@@ -126,7 +225,7 @@ class ServerActionsControllerTest(test.TestCase):
 
     def test_server_change_password_empty_string(self):
         mock_method = MockSetAdminPassword()
-        self.stubs.Set(nova.compute.api.API, 'set_admin_password', mock_method)
+        self.stubs.Set(compute_api.API, 'set_admin_password', mock_method)
         body = {'changePassword': {'adminPass': ''}}
 
         req = fakes.HTTPRequest.blank(self.url)
@@ -166,33 +265,135 @@ class ServerActionsControllerTest(test.TestCase):
                           self.controller._action_reboot,
                           req, FAKE_UUID, body)
 
+    def test_reboot_none(self):
+        body = dict(reboot=dict(type=None))
+        req = fakes.HTTPRequest.blank(self.url)
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          self.controller._action_reboot,
+                          req, FAKE_UUID, body)
+
     def test_reboot_not_found(self):
-        self.stubs.Set(nova.db, 'instance_get_by_uuid',
+        self.stubs.Set(db, 'instance_get_by_uuid',
                        return_server_not_found)
 
         body = dict(reboot=dict(type="HARD"))
         req = fakes.HTTPRequest.blank(self.url)
         self.assertRaises(webob.exc.HTTPNotFound,
                           self.controller._action_reboot,
-                          req, str(utils.gen_uuid()), body)
+                          req, str(uuid.uuid4()), body)
 
     def test_reboot_raises_conflict_on_invalid_state(self):
         body = dict(reboot=dict(type="HARD"))
 
         def fake_reboot(*args, **kwargs):
-            raise exception.InstanceInvalidState
+            raise exception.InstanceInvalidState(attr='fake_attr',
+                state='fake_state', method='fake_method',
+                instance_uuid='fake')
 
-        self.stubs.Set(nova.compute.api.API, 'reboot', fake_reboot)
+        self.stubs.Set(compute_api.API, 'reboot', fake_reboot)
 
         req = fakes.HTTPRequest.blank(self.url)
         self.assertRaises(webob.exc.HTTPConflict,
                           self.controller._action_reboot,
                           req, FAKE_UUID, body)
 
+    def test_reboot_soft_with_soft_in_progress_raises_conflict(self):
+        body = dict(reboot=dict(type="SOFT"))
+        req = fakes.HTTPRequest.blank(self.url)
+        self.stubs.Set(db, 'instance_get_by_uuid',
+                       fakes.fake_instance_get(vm_state=vm_states.ACTIVE,
+                                            task_state=task_states.REBOOTING))
+        self.assertRaises(webob.exc.HTTPConflict,
+                          self.controller._action_reboot,
+                          req, FAKE_UUID, body)
+
+    def test_reboot_hard_with_soft_in_progress_does_not_raise(self):
+        body = dict(reboot=dict(type="HARD"))
+        req = fakes.HTTPRequest.blank(self.url)
+        self.stubs.Set(db, 'instance_get_by_uuid',
+                       fakes.fake_instance_get(vm_state=vm_states.ACTIVE,
+                                        task_state=task_states.REBOOTING))
+        self.controller._action_reboot(req, FAKE_UUID, body)
+
+    def test_reboot_hard_with_hard_in_progress_raises_conflict(self):
+        body = dict(reboot=dict(type="HARD"))
+        req = fakes.HTTPRequest.blank(self.url)
+        self.stubs.Set(db, 'instance_get_by_uuid',
+                       fakes.fake_instance_get(vm_state=vm_states.ACTIVE,
+                                        task_state=task_states.REBOOTING_HARD))
+        self.assertRaises(webob.exc.HTTPConflict,
+                          self.controller._action_reboot,
+                          req, FAKE_UUID, body)
+
+    def test_rebuild_preserve_ephemeral_is_ignored_when_ext_not_loaded(self):
+        return_server = fakes.fake_instance_get(image_ref='2',
+                                                vm_state=vm_states.ACTIVE,
+                                                host='fake_host')
+        self.stubs.Set(db, 'instance_get_by_uuid', return_server)
+
+        body = {
+            "rebuild": {
+                "imageRef": self._image_href,
+                "preserve_ephemeral": False,
+            },
+        }
+        req = fakes.HTTPRequest.blank(self.url)
+        context = req.environ['nova.context']
+
+        self.mox.StubOutWithMock(compute_api.API, 'rebuild')
+        compute_api.API.rebuild(context, mox.IgnoreArg(), self._image_href,
+                                mox.IgnoreArg(), files_to_inject=None)
+        self.mox.ReplayAll()
+
+        self.controller._action_rebuild(req, FAKE_UUID, body)
+
+    def _test_rebuild_preserve_ephemeral(self, value=None):
+        def fake_is_loaded(ext):
+            return ext == 'os-preserve-ephemeral-rebuild'
+        self.stubs.Set(self.controller.ext_mgr, 'is_loaded', fake_is_loaded)
+
+        return_server = fakes.fake_instance_get(image_ref='2',
+                                                vm_state=vm_states.ACTIVE,
+                                                host='fake_host')
+        self.stubs.Set(db, 'instance_get_by_uuid', return_server)
+
+        body = {
+            "rebuild": {
+                "imageRef": self._image_href,
+            },
+        }
+        if value is not None:
+            body['rebuild']['preserve_ephemeral'] = value
+
+        req = fakes.HTTPRequest.blank(self.url)
+        context = req.environ['nova.context']
+
+        self.mox.StubOutWithMock(compute_api.API, 'rebuild')
+
+        if value is not None:
+            compute_api.API.rebuild(context, mox.IgnoreArg(), self._image_href,
+                                    mox.IgnoreArg(), preserve_ephemeral=value,
+                                    files_to_inject=None)
+        else:
+            compute_api.API.rebuild(context, mox.IgnoreArg(), self._image_href,
+                                    mox.IgnoreArg(), files_to_inject=None)
+        self.mox.ReplayAll()
+
+        self.controller._action_rebuild(req, FAKE_UUID, body)
+
+    def test_rebuild_preserve_ephemeral_true(self):
+        self._test_rebuild_preserve_ephemeral(True)
+
+    def test_rebuild_preserve_ephemeral_false(self):
+        self._test_rebuild_preserve_ephemeral(False)
+
+    def test_rebuild_preserve_ephemeral_default(self):
+        self._test_rebuild_preserve_ephemeral()
+
     def test_rebuild_accepted_minimum(self):
         return_server = fakes.fake_instance_get(image_ref='2',
                 vm_state=vm_states.ACTIVE, host='fake_host')
-        self.stubs.Set(nova.db, 'instance_get_by_uuid', return_server)
+        self.stubs.Set(db, 'instance_get_by_uuid', return_server)
         self_href = 'http://localhost/v2/fake/servers/%s' % FAKE_UUID
 
         body = {
@@ -207,7 +408,7 @@ class ServerActionsControllerTest(test.TestCase):
 
         self.assertEqual(body['server']['image']['id'], '2')
         self.assertEqual(len(body['server']['adminPass']),
-                         FLAGS.password_length)
+                         CONF.password_length)
 
         self.assertEqual(robj['location'], self_href)
 
@@ -217,22 +418,20 @@ class ServerActionsControllerTest(test.TestCase):
         def rebuild(self2, context, instance, image_href, *args, **kwargs):
             info['image_href_in_call'] = image_href
 
-        self.stubs.Set(nova.db, 'instance_get',
+        self.stubs.Set(db, 'instance_get',
                 fakes.fake_instance_get(vm_state=vm_states.ACTIVE))
-        self.stubs.Set(nova.compute.API, 'rebuild', rebuild)
+        self.stubs.Set(compute_api.API, 'rebuild', rebuild)
 
         # proper local hrefs must start with 'http://localhost/v2/'
-        image_uuid = '76fa36fc-c930-4bf3-8c8a-ea2a2420deb6'
-        image_href = 'http://localhost/v2/fake/images/%s' % image_uuid
         body = {
             'rebuild': {
-                'imageRef': image_uuid,
+                'imageRef': self.image_uuid,
             },
         }
 
         req = fakes.HTTPRequest.blank('/v2/fake/servers/a/action')
         self.controller._action_rebuild(req, FAKE_UUID, body)
-        self.assertEqual(info['image_href_in_call'], image_uuid)
+        self.assertEqual(info['image_href_in_call'], self.image_uuid)
 
     def test_rebuild_instance_with_image_href_uses_uuid(self):
         info = dict(image_href_in_call=None)
@@ -240,22 +439,20 @@ class ServerActionsControllerTest(test.TestCase):
         def rebuild(self2, context, instance, image_href, *args, **kwargs):
             info['image_href_in_call'] = image_href
 
-        self.stubs.Set(nova.db, 'instance_get',
+        self.stubs.Set(db, 'instance_get',
                 fakes.fake_instance_get(vm_state=vm_states.ACTIVE))
-        self.stubs.Set(nova.compute.API, 'rebuild', rebuild)
+        self.stubs.Set(compute_api.API, 'rebuild', rebuild)
 
         # proper local hrefs must start with 'http://localhost/v2/'
-        image_uuid = '76fa36fc-c930-4bf3-8c8a-ea2a2420deb6'
-        image_href = 'http://localhost/v2/fake/images/%s' % image_uuid
         body = {
             'rebuild': {
-                'imageRef': image_href,
+                'imageRef': self.image_href,
             },
         }
 
         req = fakes.HTTPRequest.blank('/v2/fake/servers/a/action')
         self.controller._action_rebuild(req, FAKE_UUID, body)
-        self.assertEqual(info['image_href_in_call'], image_uuid)
+        self.assertEqual(info['image_href_in_call'], self.image_uuid)
 
     def test_rebuild_accepted_minimum_pass_disabled(self):
         # run with enable_instance_password disabled to verify adminPass
@@ -264,7 +461,7 @@ class ServerActionsControllerTest(test.TestCase):
 
         return_server = fakes.fake_instance_get(image_ref='2',
                 vm_state=vm_states.ACTIVE, host='fake_host')
-        self.stubs.Set(nova.db, 'instance_get_by_uuid', return_server)
+        self.stubs.Set(db, 'instance_get_by_uuid', return_server)
         self_href = 'http://localhost/v2/fake/servers/%s' % FAKE_UUID
 
         body = {
@@ -278,7 +475,7 @@ class ServerActionsControllerTest(test.TestCase):
         body = robj.obj
 
         self.assertEqual(body['server']['image']['id'], '2')
-        self.assertTrue("adminPass" not in body['server'])
+        self.assertNotIn("adminPass", body['server'])
 
         self.assertEqual(robj['location'], self_href)
 
@@ -290,9 +487,11 @@ class ServerActionsControllerTest(test.TestCase):
         }
 
         def fake_rebuild(*args, **kwargs):
-            raise exception.InstanceInvalidState
+            raise exception.InstanceInvalidState(attr='fake_attr',
+                state='fake_state', method='fake_method',
+                instance_uuid='fake')
 
-        self.stubs.Set(nova.compute.api.API, 'rebuild', fake_rebuild)
+        self.stubs.Set(compute_api.API, 'rebuild', fake_rebuild)
 
         req = fakes.HTTPRequest.blank(self.url)
         self.assertRaises(webob.exc.HTTPConflict,
@@ -304,7 +503,7 @@ class ServerActionsControllerTest(test.TestCase):
 
         return_server = fakes.fake_instance_get(metadata=metadata,
                 vm_state=vm_states.ACTIVE, host='fake_host')
-        self.stubs.Set(nova.db, 'instance_get_by_uuid', return_server)
+        self.stubs.Set(db, 'instance_get_by_uuid', return_server)
 
         body = {
             "rebuild": {
@@ -330,6 +529,21 @@ class ServerActionsControllerTest(test.TestCase):
         self.assertRaises(webob.exc.HTTPBadRequest,
                           self.controller._action_rebuild,
                           req, FAKE_UUID, body)
+
+    def test_rebuild_with_too_large_metadata(self):
+        body = {
+            "rebuild": {
+                "imageRef": self._image_href,
+                "metadata": {
+                   256 * "k": "value"
+                }
+            }
+        }
+
+        req = fakes.HTTPRequest.blank(self.url)
+        self.assertRaises(webob.exc.HTTPRequestEntityTooLarge,
+                          self.controller._action_rebuild, req,
+                          FAKE_UUID, body)
 
     def test_rebuild_bad_entity(self):
         body = {
@@ -373,12 +587,12 @@ class ServerActionsControllerTest(test.TestCase):
         req = fakes.HTTPRequest.blank(self.url)
         body = self.controller._action_rebuild(req, FAKE_UUID, body).obj
 
-        self.assertTrue('personality' not in body['server'])
+        self.assertNotIn('personality', body['server'])
 
     def test_rebuild_admin_pass(self):
         return_server = fakes.fake_instance_get(image_ref='2',
                 vm_state=vm_states.ACTIVE, host='fake_host')
-        self.stubs.Set(nova.db, 'instance_get_by_uuid', return_server)
+        self.stubs.Set(db, 'instance_get_by_uuid', return_server)
 
         body = {
             "rebuild": {
@@ -400,7 +614,7 @@ class ServerActionsControllerTest(test.TestCase):
 
         return_server = fakes.fake_instance_get(image_ref='2',
                 vm_state=vm_states.ACTIVE, host='fake_host')
-        self.stubs.Set(nova.db, 'instance_get_by_uuid', return_server)
+        self.stubs.Set(db, 'instance_get_by_uuid', return_server)
 
         body = {
             "rebuild": {
@@ -413,12 +627,13 @@ class ServerActionsControllerTest(test.TestCase):
         body = self.controller._action_rebuild(req, FAKE_UUID, body).obj
 
         self.assertEqual(body['server']['image']['id'], '2')
-        self.assertTrue('adminPass' not in body['server'])
+        self.assertNotIn('adminPass', body['server'])
 
     def test_rebuild_server_not_found(self):
-        def server_not_found(self, instance_id):
+        def server_not_found(self, instance_id,
+                             columns_to_join=None, use_slave=False):
             raise exception.InstanceNotFound(instance_id=instance_id)
-        self.stubs.Set(nova.db, 'instance_get_by_uuid', server_not_found)
+        self.stubs.Set(db, 'instance_get_by_uuid', server_not_found)
 
         body = {
             "rebuild": {
@@ -456,18 +671,102 @@ class ServerActionsControllerTest(test.TestCase):
             },
         }
 
-        update = self.mox.CreateMockAnything()
-        self.stubs.Set(nova.compute.API, 'update', update)
+        data = {'changes': {}}
+        orig_get = compute_api.API.get
+
+        def wrap_get(*args, **kwargs):
+            data['instance'] = orig_get(*args, **kwargs)
+            return data['instance']
+
+        def fake_save(context, **kwargs):
+            data['changes'].update(data['instance'].obj_get_changes())
+
+        self.stubs.Set(compute_api.API, 'get', wrap_get)
+        self.stubs.Set(instance_obj.Instance, 'save', fake_save)
         req = fakes.HTTPRequest.blank(self.url)
-        context = req.environ['nova.context']
-        update(context, mox.IgnoreArg(),
-                image_ref=self._image_href,
-                task_state=task_states.REBUILDING,
-                progress=0, **attributes).AndReturn(
-                        fakes.stub_instance(1, host='fake_host'))
-        self.mox.ReplayAll()
 
         self.controller._action_rebuild(req, FAKE_UUID, body)
+
+        self.assertEqual(self._image_href, data['changes']['image_ref'])
+        self.assertEqual("", data['changes']['kernel_id'])
+        self.assertEqual("", data['changes']['ramdisk_id'])
+        self.assertEqual(task_states.REBUILDING, data['changes']['task_state'])
+        self.assertEqual(0, data['changes']['progress'])
+        for attr, value in attributes.items():
+            self.assertEqual(value, str(data['changes'][attr]))
+
+    def test_rebuild_when_kernel_not_exists(self):
+
+        def return_image_meta(*args, **kwargs):
+            image_meta_table = {
+                '2': {'id': 2, 'status': 'active', 'container_format': 'ari'},
+                '155d900f-4e14-4e4c-a73d-069cbf4541e6':
+                     {'id': 3, 'status': 'active', 'container_format': 'raw',
+                      'properties': {'kernel_id': 1, 'ramdisk_id': 2}},
+            }
+            image_id = args[2]
+            try:
+                image_meta = image_meta_table[str(image_id)]
+            except KeyError:
+                raise exception.ImageNotFound(image_id=image_id)
+
+            return image_meta
+
+        self.stubs.Set(fake._FakeImageService, 'show', return_image_meta)
+        body = {
+            "rebuild": {
+                "imageRef": "155d900f-4e14-4e4c-a73d-069cbf4541e6",
+            },
+        }
+        req = fakes.HTTPRequest.blank(self.url)
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          self.controller._action_rebuild,
+                          req, FAKE_UUID, body)
+
+    def test_rebuild_proper_kernel_ram(self):
+        instance_meta = {'kernel_id': None, 'ramdisk_id': None}
+
+        orig_get = compute_api.API.get
+
+        def wrap_get(*args, **kwargs):
+            inst = orig_get(*args, **kwargs)
+            instance_meta['instance'] = inst
+            return inst
+
+        def fake_save(context, **kwargs):
+            instance = instance_meta['instance']
+            for key in instance_meta.keys():
+                if key in instance.obj_what_changed():
+                    instance_meta[key] = instance[key]
+
+        def return_image_meta(*args, **kwargs):
+            image_meta_table = {
+                '1': {'id': 1, 'status': 'active', 'container_format': 'aki'},
+                '2': {'id': 2, 'status': 'active', 'container_format': 'ari'},
+                '155d900f-4e14-4e4c-a73d-069cbf4541e6':
+                     {'id': 3, 'status': 'active', 'container_format': 'raw',
+                      'properties': {'kernel_id': 1, 'ramdisk_id': 2}},
+            }
+            image_id = args[2]
+            try:
+                image_meta = image_meta_table[str(image_id)]
+            except KeyError:
+                raise exception.ImageNotFound(image_id=image_id)
+
+            return image_meta
+
+        self.stubs.Set(fake._FakeImageService, 'show', return_image_meta)
+        self.stubs.Set(compute_api.API, 'get', wrap_get)
+        self.stubs.Set(instance_obj.Instance, 'save', fake_save)
+        body = {
+            "rebuild": {
+                "imageRef": "155d900f-4e14-4e4c-a73d-069cbf4541e6",
+            },
+        }
+        req = fakes.HTTPRequest.blank(self.url)
+        self.controller._action_rebuild(req, FAKE_UUID, body).obj
+        self.assertEqual(instance_meta['kernel_id'], '1')
+        self.assertEqual(instance_meta['ramdisk_id'], '2')
 
     def test_resize_server(self):
 
@@ -478,7 +777,7 @@ class ServerActionsControllerTest(test.TestCase):
         def resize_mock(*args):
             self.resize_called = True
 
-        self.stubs.Set(nova.compute.api.API, 'resize', resize_mock)
+        self.stubs.Set(compute_api.API, 'resize', resize_mock)
 
         req = fakes.HTTPRequest.blank(self.url)
         body = self.controller._action_resize(req, FAKE_UUID, body)
@@ -501,13 +800,66 @@ class ServerActionsControllerTest(test.TestCase):
                           self.controller._action_resize,
                           req, FAKE_UUID, body)
 
+    def test_resize_with_server_not_found(self):
+        body = dict(resize=dict(flavorRef="http://localhost/3"))
+
+        self.stubs.Set(compute_api.API, 'get', return_server_not_found)
+
+        req = fakes.HTTPRequest.blank(self.url)
+        self.assertRaises(webob.exc.HTTPNotFound,
+                          self.controller._action_resize,
+                          req, FAKE_UUID, body)
+
+    def test_resize_with_image_exceptions(self):
+        body = dict(resize=dict(flavorRef="http://localhost/3"))
+        self.resize_called = 0
+        image_id = 'fake_image_id'
+
+        exceptions = [
+            (exception.ImageNotAuthorized(image_id=image_id),
+             webob.exc.HTTPUnauthorized),
+            (exception.ImageNotFound(image_id=image_id),
+             webob.exc.HTTPBadRequest),
+            (exception.Invalid, webob.exc.HTTPBadRequest),
+        ]
+
+        raised, expected = map(iter, zip(*exceptions))
+
+        def _fake_resize(obj, context, instance, flavor_id):
+            self.resize_called += 1
+            raise raised.next()
+
+        self.stubs.Set(compute_api.API, 'resize', _fake_resize)
+
+        for call_no in range(len(exceptions)):
+            req = fakes.HTTPRequest.blank(self.url)
+            self.assertRaises(expected.next(),
+                              self.controller._action_resize,
+                              req, FAKE_UUID, body)
+            self.assertEqual(self.resize_called, call_no + 1)
+
+    def test_resize_with_too_many_instances(self):
+        body = dict(resize=dict(flavorRef="http://localhost/3"))
+
+        def fake_resize(*args, **kwargs):
+            raise exception.TooManyInstances(message="TooManyInstance")
+
+        self.stubs.Set(compute_api.API, 'resize', fake_resize)
+
+        req = fakes.HTTPRequest.blank(self.url)
+        self.assertRaises(webob.exc.HTTPRequestEntityTooLarge,
+                          self.controller._action_resize,
+                          req, FAKE_UUID, body)
+
     def test_resize_raises_conflict_on_invalid_state(self):
         body = dict(resize=dict(flavorRef="http://localhost/3"))
 
         def fake_resize(*args, **kwargs):
-            raise exception.InstanceInvalidState
+            raise exception.InstanceInvalidState(attr='fake_attr',
+                state='fake_state', method='fake_method',
+                instance_uuid='fake')
 
-        self.stubs.Set(nova.compute.api.API, 'resize', fake_resize)
+        self.stubs.Set(compute_api.API, 'resize', fake_resize)
 
         req = fakes.HTTPRequest.blank(self.url)
         self.assertRaises(webob.exc.HTTPConflict,
@@ -522,7 +874,7 @@ class ServerActionsControllerTest(test.TestCase):
         def cr_mock(*args):
             self.confirm_resize_called = True
 
-        self.stubs.Set(nova.compute.api.API, 'confirm_resize', cr_mock)
+        self.stubs.Set(compute_api.API, 'confirm_resize', cr_mock)
 
         req = fakes.HTTPRequest.blank(self.url)
         body = self.controller._action_confirm_resize(req, FAKE_UUID, body)
@@ -536,7 +888,7 @@ class ServerActionsControllerTest(test.TestCase):
             raise exception.MigrationNotFoundByStatus(instance_id=1,
                                                       status='finished')
 
-        self.stubs.Set(nova.compute.api.API,
+        self.stubs.Set(compute_api.API,
                        'confirm_resize',
                        confirm_resize_mock)
 
@@ -549,9 +901,11 @@ class ServerActionsControllerTest(test.TestCase):
         body = dict(confirmResize=None)
 
         def fake_confirm_resize(*args, **kwargs):
-            raise exception.InstanceInvalidState
+            raise exception.InstanceInvalidState(attr='fake_attr',
+                state='fake_state', method='fake_method',
+                instance_uuid='fake')
 
-        self.stubs.Set(nova.compute.api.API, 'confirm_resize',
+        self.stubs.Set(compute_api.API, 'confirm_resize',
                 fake_confirm_resize)
 
         req = fakes.HTTPRequest.blank(self.url)
@@ -566,7 +920,7 @@ class ServerActionsControllerTest(test.TestCase):
             raise exception.MigrationNotFoundByStatus(instance_id=1,
                                                       status='finished')
 
-        self.stubs.Set(nova.compute.api.API,
+        self.stubs.Set(compute_api.API,
                        'revert_resize',
                        revert_resize_mock)
 
@@ -574,6 +928,14 @@ class ServerActionsControllerTest(test.TestCase):
         self.assertRaises(webob.exc.HTTPBadRequest,
                           self.controller._action_revert_resize,
                           req, FAKE_UUID, body)
+
+    def test_revert_resize_server_not_found(self):
+        body = dict(revertResize=None)
+
+        req = fakes.HTTPRequest.blank(self.url)
+        self.assertRaises(webob. exc.HTTPNotFound,
+                          self.controller._action_revert_resize,
+                          req, "bad_server_id", body)
 
     def test_revert_resize_server(self):
         body = dict(revertResize=None)
@@ -583,7 +945,7 @@ class ServerActionsControllerTest(test.TestCase):
         def revert_mock(*args):
             self.revert_resize_called = True
 
-        self.stubs.Set(nova.compute.api.API, 'revert_resize', revert_mock)
+        self.stubs.Set(compute_api.API, 'revert_resize', revert_mock)
 
         req = fakes.HTTPRequest.blank(self.url)
         body = self.controller._action_revert_resize(req, FAKE_UUID, body)
@@ -594,9 +956,11 @@ class ServerActionsControllerTest(test.TestCase):
         body = dict(revertResize=None)
 
         def fake_revert_resize(*args, **kwargs):
-            raise exception.InstanceInvalidState
+            raise exception.InstanceInvalidState(attr='fake_attr',
+                state='fake_state', method='fake_method',
+                instance_uuid='fake')
 
-        self.stubs.Set(nova.compute.api.API, 'revert_resize',
+        self.stubs.Set(compute_api.API, 'revert_resize',
                 fake_revert_resize)
 
         req = fakes.HTTPRequest.blank(self.url)
@@ -616,6 +980,167 @@ class ServerActionsControllerTest(test.TestCase):
 
         location = response.headers['Location']
         self.assertEqual('http://localhost/v2/fake/images/123', location)
+
+    def test_create_image_name_too_long(self):
+        long_name = 'a' * 260
+        body = {
+            'createImage': {
+                'name': long_name,
+            },
+        }
+
+        req = fakes.HTTPRequest.blank(self.url)
+        self.assertRaises(webob.exc.HTTPBadRequest,
+                          self.controller._action_create_image, req,
+                          FAKE_UUID, body)
+
+    def _do_test_create_volume_backed_image(self, extra_properties):
+
+        def _fake_id(x):
+            return '%s-%s-%s-%s' % (x * 8, x * 4, x * 4, x * 12)
+
+        body = dict(createImage=dict(name='snapshot_of_volume_backed'))
+
+        if extra_properties:
+            body['createImage']['metadata'] = extra_properties
+
+        image_service = glance.get_default_image_service()
+
+        bdm = [dict(volume_id=_fake_id('a'),
+                    volume_size=1,
+                    device_name='vda',
+                    delete_on_termination=False)]
+        props = dict(kernel_id=_fake_id('b'),
+                     ramdisk_id=_fake_id('c'),
+                     root_device_name='/dev/vda',
+                     block_device_mapping=bdm)
+        original_image = dict(properties=props,
+                              container_format='ami',
+                              status='active',
+                              is_public=True)
+
+        image_service.create(None, original_image)
+
+        def fake_block_device_mapping_get_all_by_instance(context, inst_id):
+            return [fake_block_device.FakeDbBlockDeviceDict(
+                        {'volume_id': _fake_id('a'),
+                         'source_type': 'snapshot',
+                         'destination_type': 'volume',
+                         'volume_size': 1,
+                         'device_name': 'vda',
+                         'snapshot_id': 1,
+                         'boot_index': 0,
+                         'delete_on_termination': False,
+                         'no_device': None})]
+
+        self.stubs.Set(db, 'block_device_mapping_get_all_by_instance',
+                       fake_block_device_mapping_get_all_by_instance)
+
+        instance = fakes.fake_instance_get(image_ref=original_image['id'],
+                                           vm_state=vm_states.ACTIVE,
+                                           root_device_name='/dev/vda')
+        self.stubs.Set(db, 'instance_get_by_uuid', instance)
+
+        volume = dict(id=_fake_id('a'),
+                      size=1,
+                      host='fake',
+                      display_description='fake')
+        snapshot = dict(id=_fake_id('d'))
+        self.mox.StubOutWithMock(self.controller.compute_api, 'volume_api')
+        volume_api = self.controller.compute_api.volume_api
+        volume_api.get(mox.IgnoreArg(), volume['id']).AndReturn(volume)
+        volume_api.create_snapshot_force(mox.IgnoreArg(), volume['id'],
+                mox.IgnoreArg(), mox.IgnoreArg()).AndReturn(snapshot)
+
+        self.mox.ReplayAll()
+
+        req = fakes.HTTPRequest.blank(self.url)
+        response = self.controller._action_create_image(req, FAKE_UUID, body)
+
+        location = response.headers['Location']
+        image_id = location.replace('http://localhost/v2/fake/images/', '')
+        image = image_service.show(None, image_id)
+
+        self.assertEqual(image['name'], 'snapshot_of_volume_backed')
+        properties = image['properties']
+        self.assertEqual(properties['kernel_id'], _fake_id('b'))
+        self.assertEqual(properties['ramdisk_id'], _fake_id('c'))
+        self.assertEqual(properties['root_device_name'], '/dev/vda')
+        self.assertEqual(properties['bdm_v2'], True)
+        bdms = properties['block_device_mapping']
+        self.assertEqual(len(bdms), 1)
+        self.assertEqual(bdms[0]['boot_index'], 0)
+        self.assertEqual(bdms[0]['source_type'], 'snapshot')
+        self.assertEqual(bdms[0]['destination_type'], 'volume')
+        self.assertEqual(bdms[0]['snapshot_id'], snapshot['id'])
+        for fld in ('connection_info', 'id',
+                    'instance_uuid', 'device_name'):
+            self.assertTrue(fld not in bdms[0])
+        for k in extra_properties.keys():
+            self.assertEqual(properties[k], extra_properties[k])
+
+    def test_create_volume_backed_image_no_metadata(self):
+        self._do_test_create_volume_backed_image({})
+
+    def test_create_volume_backed_image_with_metadata(self):
+        self._do_test_create_volume_backed_image(dict(ImageType='Gold',
+                                                      ImageVersion='2.0'))
+
+    def test_create_volume_backed_image_with_metadata_from_volume(self):
+
+        def _fake_id(x):
+            return '%s-%s-%s-%s' % (x * 8, x * 4, x * 4, x * 12)
+
+        body = dict(createImage=dict(name='snapshot_of_volume_backed'))
+
+        image_service = glance.get_default_image_service()
+
+        def fake_block_device_mapping_get_all_by_instance(context, inst_id):
+            return [fake_block_device.FakeDbBlockDeviceDict(
+                        {'volume_id': _fake_id('a'),
+                         'source_type': 'snapshot',
+                         'destination_type': 'volume',
+                         'volume_size': 1,
+                         'device_name': 'vda',
+                         'snapshot_id': 1,
+                         'boot_index': 0,
+                         'delete_on_termination': False,
+                         'no_device': None})]
+
+        self.stubs.Set(db, 'block_device_mapping_get_all_by_instance',
+                       fake_block_device_mapping_get_all_by_instance)
+
+        instance = fakes.fake_instance_get(image_ref='',
+                                           vm_state=vm_states.ACTIVE,
+                                           root_device_name='/dev/vda')
+        self.stubs.Set(db, 'instance_get_by_uuid', instance)
+
+        fake_metadata = {'test_key1': 'test_value1',
+                         'test_key2': 'test_value2'}
+        volume = dict(id=_fake_id('a'),
+                      size=1,
+                      host='fake',
+                      display_description='fake',
+                      volume_image_metadata=fake_metadata)
+        snapshot = dict(id=_fake_id('d'))
+        self.mox.StubOutWithMock(self.controller.compute_api, 'volume_api')
+        volume_api = self.controller.compute_api.volume_api
+        volume_api.get(mox.IgnoreArg(), volume['id']).AndReturn(volume)
+        volume_api.get(mox.IgnoreArg(), volume['id']).AndReturn(volume)
+        volume_api.create_snapshot_force(mox.IgnoreArg(), volume['id'],
+               mox.IgnoreArg(), mox.IgnoreArg()).AndReturn(snapshot)
+
+        req = fakes.HTTPRequest.blank(self.url)
+
+        self.mox.ReplayAll()
+        response = self.controller._action_create_image(req, FAKE_UUID, body)
+        location = response.headers['Location']
+        image_id = location.replace('http://localhost/v2/fake/images/', '')
+        image = image_service.show(None, image_id)
+
+        properties = image['properties']
+        self.assertEqual(properties['test_key1'], 'test_value1')
+        self.assertEqual(properties['test_key2'], 'test_value2')
 
     def test_create_image_snapshots_disabled(self):
         """Don't permit a snapshot if the allow_instance_snapshots flag is
@@ -653,7 +1178,7 @@ class ServerActionsControllerTest(test.TestCase):
                 'metadata': {},
             },
         }
-        for num in range(FLAGS.quota_metadata_items + 1):
+        for num in range(CONF.quota_metadata_items + 1):
             body['createImage']['metadata']['foo%i' % num] = "bar"
 
         req = fakes.HTTPRequest.blank(self.url)
@@ -695,8 +1220,10 @@ class ServerActionsControllerTest(test.TestCase):
 
     def test_create_image_raises_conflict_on_invalid_state(self):
         def snapshot(*args, **kwargs):
-            raise exception.InstanceInvalidState
-        self.stubs.Set(nova.compute.API, 'snapshot', snapshot)
+            raise exception.InstanceInvalidState(attr='fake_attr',
+                state='fake_state', method='fake_method',
+                instance_uuid='fake')
+        self.stubs.Set(compute_api.API, 'snapshot', snapshot)
 
         body = {
             "createImage": {
@@ -707,18 +1234,6 @@ class ServerActionsControllerTest(test.TestCase):
         req = fakes.HTTPRequest.blank(self.url)
         self.assertRaises(webob.exc.HTTPConflict,
                           self.controller._action_create_image,
-                          req, FAKE_UUID, body)
-
-    def test_locked(self):
-        def fake_locked(context, instance_uuid):
-            return {"name": "foo",
-                    "uuid": FAKE_UUID,
-                    "locked": True}
-        self.stubs.Set(nova.db, 'instance_get_by_uuid', fake_locked)
-        body = dict(reboot=dict(type="HARD"))
-        req = fakes.HTTPRequest.blank(self.url)
-        self.assertRaises(webob.exc.HTTPConflict,
-                          self.controller._action_reboot,
                           req, FAKE_UUID, body)
 
 
@@ -738,7 +1253,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "name": "new-server-test",
             },
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_create_image_with_metadata(self):
         serial_request = """
@@ -755,7 +1270,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "metadata": {"key1": "value1"},
             },
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_change_pass(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -768,7 +1283,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "adminPass": "1234pass",
             },
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_change_pass_no_pass(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -790,7 +1305,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "adminPass": "",
             },
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_reboot(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -803,7 +1318,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "type": "HARD",
             },
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_reboot_no_type(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -823,7 +1338,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
         expected = {
             "resize": {"flavorRef": "http://localhost/flavors/3"},
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_resize_no_flavor_ref(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -842,7 +1357,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
         expected = {
             "confirmResize": None,
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_revert_resize(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -852,7 +1367,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
         expected = {
             "revertResize": None,
         }
-        self.assertEquals(request['body'], expected)
+        self.assertEqual(request['body'], expected)
 
     def test_rebuild(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -880,7 +1395,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 ],
             },
         }
-        self.assertDictMatch(request['body'], expected)
+        self.assertThat(request['body'], matchers.DictMatches(expected))
 
     def test_rebuild_minimum(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -893,7 +1408,7 @@ class TestServerActionXMLDeserializer(test.TestCase):
                 "imageRef": "http://localhost/images/1",
             },
         }
-        self.assertDictMatch(request['body'], expected)
+        self.assertThat(request['body'], matchers.DictMatches(expected))
 
     def test_rebuild_no_imageRef(self):
         serial_request = """<?xml version="1.0" encoding="UTF-8"?>
@@ -922,3 +1437,25 @@ class TestServerActionXMLDeserializer(test.TestCase):
                           self.deserializer.deserialize,
                           serial_request,
                           'action')
+
+    def test_rebuild_preserve_ephemeral_passed(self):
+        serial_request = """<?xml version="1.0" encoding="UTF-8"?>
+                <rebuild
+                    xmlns="http://docs.openstack.org/compute/api/v1.1"
+                    imageRef="http://localhost/images/1"
+                    preserve_ephemeral="true"/>"""
+        request = self.deserializer.deserialize(serial_request, 'action')
+        expected = {
+            "rebuild": {
+                "imageRef": "http://localhost/images/1",
+                "preserve_ephemeral": True,
+            },
+        }
+        self.assertThat(request['body'], matchers.DictMatches(expected))
+
+    def test_corrupt_xml(self):
+        """Should throw a 400 error on corrupt xml."""
+        self.assertRaises(
+                exception.MalformedRequestBody,
+                self.deserializer.deserialize,
+                utils.killer_xml_body())

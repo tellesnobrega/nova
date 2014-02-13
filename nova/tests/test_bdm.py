@@ -22,32 +22,39 @@ Tests for Block Device Mapping Code.
 from nova.api.ec2 import cloud
 from nova.api.ec2 import ec2utils
 from nova import test
+from nova.tests import matchers
 
 
-class BlockDeviceMappingEc2CloudTestCase(test.TestCase):
-    """Test Case for Block Device Mapping"""
+class BlockDeviceMappingEc2CloudTestCase(test.NoDBTestCase):
+    """Test Case for Block Device Mapping."""
 
     def fake_ec2_vol_id_to_uuid(obj, ec2_id):
-        if ec2_id == 'snap-12345678':
-            return '00000000-1111-2222-3333-444444444444'
-        elif ec2_id == 'snap-23456789':
-            return '11111111-2222-3333-4444-555555555555'
-        elif ec2_id == 'vol-87654321':
+        if ec2_id == 'vol-87654321':
             return '22222222-3333-4444-5555-666666666666'
         elif ec2_id == 'vol-98765432':
             return '77777777-8888-9999-0000-aaaaaaaaaaaa'
         else:
             return 'OhNoooo'
 
+    def fake_ec2_snap_id_to_uuid(obj, ec2_id):
+        if ec2_id == 'snap-12345678':
+            return '00000000-1111-2222-3333-444444444444'
+        elif ec2_id == 'snap-23456789':
+            return '11111111-2222-3333-4444-555555555555'
+        else:
+            return 'OhNoooo'
+
     def _assertApply(self, action, bdm_list):
         for bdm, expected_result in bdm_list:
-            self.assertDictMatch(action(bdm), expected_result)
+            self.assertThat(action(bdm), matchers.DictMatches(expected_result))
 
     def test_parse_block_device_mapping(self):
         self.stubs.Set(ec2utils,
                 'ec2_vol_id_to_uuid',
                 self.fake_ec2_vol_id_to_uuid)
-
+        self.stubs.Set(ec2utils,
+                'ec2_snap_id_to_uuid',
+                self.fake_ec2_snap_id_to_uuid)
         bdm_list = [
             ({'device_name': '/dev/fake0',
               'ebs': {'snapshot_id': 'snap-12345678',
@@ -239,6 +246,5 @@ class BlockDeviceMappingEc2CloudTestCase(test.TestCase):
 
         result = {}
         cloud._format_mappings(properties, result)
-        print result
         self.assertEqual(result['blockDeviceMapping'].sort(),
                          expected_result['blockDeviceMapping'].sort())

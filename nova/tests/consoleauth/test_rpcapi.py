@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2012, Red Hat, Inc.
+# Copyright 2013 Red Hat, Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -18,57 +18,76 @@
 Unit Tests for nova.consoleauth.rpcapi
 """
 
+import contextlib
+
+import mock
+from oslo.config import cfg
+
 from nova.consoleauth import rpcapi as consoleauth_rpcapi
 from nova import context
-from nova import flags
-from nova.openstack.common import rpc
 from nova import test
 
+CONF = cfg.CONF
 
-FLAGS = flags.FLAGS
 
-
-class ConsoleAuthRpcAPITestCase(test.TestCase):
-
-    def setUp(self):
-        super(ConsoleAuthRpcAPITestCase, self).setUp()
-
-    def tearDown(self):
-        super(ConsoleAuthRpcAPITestCase, self).tearDown()
-
+class ConsoleAuthRpcAPITestCase(test.NoDBTestCase):
     def _test_consoleauth_api(self, method, **kwargs):
+        do_cast = kwargs.pop('_do_cast', False)
+
         ctxt = context.RequestContext('fake_user', 'fake_project')
+
         rpcapi = consoleauth_rpcapi.ConsoleAuthAPI()
-        expected_retval = 'foo'
-        expected_msg = rpcapi.make_msg(method, **kwargs)
-        expected_msg['version'] = rpcapi.BASE_RPC_API_VERSION
+        self.assertIsNotNone(rpcapi.client)
+        self.assertEqual(rpcapi.client.target.topic, CONF.consoleauth_topic)
 
-        self.call_ctxt = None
-        self.call_topic = None
-        self.call_msg = None
-        self.call_timeout = None
+        orig_prepare = rpcapi.client.prepare
+        expected_version = kwargs.pop('version', rpcapi.client.target.version)
 
-        def _fake_call(_ctxt, _topic, _msg, _timeout):
-            self.call_ctxt = _ctxt
-            self.call_topic = _topic
-            self.call_msg = _msg
-            self.call_timeout = _timeout
-            return expected_retval
+        with contextlib.nested(
+            mock.patch.object(rpcapi.client, 'cast' if do_cast else 'call'),
+            mock.patch.object(rpcapi.client, 'prepare'),
+            mock.patch.object(rpcapi.client, 'can_send_version'),
+        ) as (
+            rpc_mock, prepare_mock, csv_mock
+        ):
+            prepare_mock.return_value = rpcapi.client
+            rpc_mock.return_value = None if do_cast else 'foo'
+            csv_mock.side_effect = (
+                lambda v: orig_prepare(version=v).can_send_version())
 
-        self.stubs.Set(rpc, 'call', _fake_call)
+            retval = getattr(rpcapi, method)(ctxt, **kwargs)
+            self.assertEqual(retval, rpc_mock.return_value)
 
-        retval = getattr(rpcapi, method)(ctxt, **kwargs)
-
-        self.assertEqual(retval, expected_retval)
-        self.assertEqual(self.call_ctxt, ctxt)
-        self.assertEqual(self.call_topic, FLAGS.consoleauth_topic)
-        self.assertEqual(self.call_msg, expected_msg)
-        self.assertEqual(self.call_timeout, None)
+            prepare_mock.assert_called_once_with(version=expected_version)
+            rpc_mock.assert_called_once_with(ctxt, method, **kwargs)
 
     def test_authorize_console(self):
         self._test_consoleauth_api('authorize_console', token='token',
                 console_type='ctype', host='h', port='p',
-                internal_access_path='iap')
+                internal_access_path='iap', instance_uuid="instance")
+
+        # NOTE(russellb) Havana compat
+        self.flags(consoleauth='havana', group='upgrade_levels')
+        self._test_consoleauth_api('authorize_console', token='token',
+                console_type='ctype', host='h', port='p',
+                internal_access_path='iap', instance_uuid="instance",
+                version='1.2')
 
     def test_check_token(self):
         self._test_consoleauth_api('check_token', token='t')
+
+        # NOTE(russellb) Havana compat
+        self.flags(consoleauth='havana', group='upgrade_levels')
+        self._test_consoleauth_api('check_token', token='t', version='1.0')
+
+    def test_delete_tokens_for_instnace(self):
+        self._test_consoleauth_api('delete_tokens_for_instance',
+                                   _do_cast=True,
+                                   instance_uuid="instance")
+
+        # NOTE(russellb) Havana compat
+        self.flags(consoleauth='havana', group='upgrade_levels')
+        self._test_consoleauth_api('delete_tokens_for_instance',
+                                   _do_cast=True,
+                                   instance_uuid="instance",
+                                   version='1.2')

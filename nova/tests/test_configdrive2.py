@@ -18,24 +18,16 @@
 
 import mox
 import os
-import subprocess
 import tempfile
 
 from nova import test
 
-from nova import flags
-from nova.openstack.common import log
+from nova.openstack.common import fileutils
 from nova import utils
 from nova.virt import configdrive
-from nova.virt.libvirt import utils as virtutils
 
 
-FLAGS = flags.FLAGS
-
-LOG = log.getLogger(__name__)
-
-
-class ConfigDriveTestCase(test.TestCase):
+class ConfigDriveTestCase(test.NoDBTestCase):
 
     def test_create_configdrive_iso(self):
         imagefile = None
@@ -51,45 +43,41 @@ class ConfigDriveTestCase(test.TestCase):
 
             self.mox.ReplayAll()
 
-            c = configdrive.ConfigDriveBuilder()
-            c._add_file('this/is/a/path/hello', 'This is some content')
-            (fd, imagefile) = tempfile.mkstemp(prefix='cd_iso_')
-            os.close(fd)
-            c._make_iso9660(imagefile)
-            c.cleanup()
+            with configdrive.ConfigDriveBuilder() as c:
+                c._add_file('this/is/a/path/hello', 'This is some content')
+                (fd, imagefile) = tempfile.mkstemp(prefix='cd_iso_')
+                os.close(fd)
+                c._make_iso9660(imagefile)
 
             # Check cleanup
             self.assertFalse(os.path.exists(c.tempdir))
 
         finally:
             if imagefile:
-                utils.delete_if_exists(imagefile)
+                fileutils.delete_if_exists(imagefile)
 
     def test_create_configdrive_vfat(self):
         imagefile = None
         try:
-            self.mox.StubOutWithMock(virtutils, 'mkfs')
+            self.mox.StubOutWithMock(utils, 'mkfs')
             self.mox.StubOutWithMock(utils, 'execute')
             self.mox.StubOutWithMock(utils, 'trycmd')
 
-            virtutils.mkfs('vfat', mox.IgnoreArg(),
-                           label='config-2').AndReturn(None)
-            utils.trycmd('mount', '-o', 'loop', mox.IgnoreArg(),
+            utils.mkfs('vfat', mox.IgnoreArg(),
+                       label='config-2').AndReturn(None)
+            utils.trycmd('mount', '-o', mox.IgnoreArg(), mox.IgnoreArg(),
                          mox.IgnoreArg(),
-                         run_as_root=True).AndReturn((None, None))
-            utils.trycmd('chown', mox.IgnoreArg(), mox.IgnoreArg(),
                          run_as_root=True).AndReturn((None, None))
             utils.execute('umount', mox.IgnoreArg(),
                           run_as_root=True).AndReturn(None)
 
             self.mox.ReplayAll()
 
-            c = configdrive.ConfigDriveBuilder()
-            c._add_file('this/is/a/path/hello', 'This is some content')
-            (fd, imagefile) = tempfile.mkstemp(prefix='cd_vfat_')
-            os.close(fd)
-            c._make_vfat(imagefile)
-            c.cleanup()
+            with configdrive.ConfigDriveBuilder() as c:
+                c._add_file('this/is/a/path/hello', 'This is some content')
+                (fd, imagefile) = tempfile.mkstemp(prefix='cd_vfat_')
+                os.close(fd)
+                c._make_vfat(imagefile)
 
             # Check cleanup
             self.assertFalse(os.path.exists(c.tempdir))
@@ -100,4 +88,4 @@ class ConfigDriveTestCase(test.TestCase):
 
         finally:
             if imagefile:
-                utils.delete_if_exists(imagefile)
+                fileutils.delete_if_exists(imagefile)

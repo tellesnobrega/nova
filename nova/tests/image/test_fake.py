@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-#    Copyright 2011 OpenStack LLC
+#    Copyright 2011 OpenStack Foundation
 #    Author: Soren Hansen
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -24,26 +24,27 @@ from nova import test
 import nova.tests.image.fake
 
 
-class FakeImageServiceTestCase(test.TestCase):
+class FakeImageServiceTestCase(test.NoDBTestCase):
     def setUp(self):
         super(FakeImageServiceTestCase, self).setUp()
         self.image_service = nova.tests.image.fake.FakeImageService()
         self.context = context.get_admin_context()
 
     def tearDown(self):
-        super(FakeImageServiceTestCase, self).setUp()
+        super(FakeImageServiceTestCase, self).tearDown()
         nova.tests.image.fake.FakeImageService_reset()
 
     def test_detail(self):
         res = self.image_service.detail(self.context)
         for image in res:
             keys = set(image.keys())
-            self.assertEquals(keys, set(['id', 'name', 'created_at',
-                                         'updated_at', 'deleted_at', 'deleted',
-                                         'status', 'is_public', 'properties',
-                                         'disk_format', 'container_format']))
-            self.assertTrue(isinstance(image['created_at'], datetime.datetime))
-            self.assertTrue(isinstance(image['updated_at'], datetime.datetime))
+            self.assertEqual(keys, set(['id', 'name', 'created_at',
+                                        'updated_at', 'deleted_at', 'deleted',
+                                        'status', 'is_public', 'properties',
+                                        'disk_format', 'container_format',
+                                        'size']))
+            self.assertIsInstance(image['created_at'], datetime.datetime)
+            self.assertIsInstance(image['updated_at'], datetime.datetime)
 
             if not (isinstance(image['deleted_at'], datetime.datetime) or
                                       image['deleted_at'] is None):
@@ -72,7 +73,7 @@ class FakeImageServiceTestCase(test.TestCase):
         self.image_service.create(self.context, {})
 
         index = self.image_service.detail(self.context)
-        self.assertEquals(len(index), image_count + 1)
+        self.assertEqual(len(index), image_count + 1)
 
         self.assertTrue(index[0]['id'])
 
@@ -82,7 +83,7 @@ class FakeImageServiceTestCase(test.TestCase):
 
     def test_create_rejects_duplicate_ids(self):
         self.image_service.create(self.context, {'id': '34'})
-        self.assertRaises(exception.Duplicate,
+        self.assertRaises(exception.CouldNotUploadImage,
                           self.image_service.create,
                           self.context,
                           {'id': '34'})
@@ -98,7 +99,7 @@ class FakeImageServiceTestCase(test.TestCase):
                                   {'id': '34', 'foo': 'baz'})
 
         img = self.image_service.show(self.context, '34')
-        self.assertEquals(img['foo'], 'baz')
+        self.assertEqual(img['foo'], 'baz')
 
     def test_delete(self):
         self.image_service.create(self.context, {'id': '34', 'foo': 'bar'})
@@ -116,4 +117,4 @@ class FakeImageServiceTestCase(test.TestCase):
                                   data=s1)
         s2 = StringIO.StringIO()
         self.image_service.download(self.context, '32', data=s2)
-        self.assertEquals(s2.getvalue(), blob, 'Did not get blob back intact')
+        self.assertEqual(s2.getvalue(), blob, 'Did not get blob back intact')

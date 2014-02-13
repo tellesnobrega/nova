@@ -16,7 +16,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from eventlet.green import httplib
 from lxml import etree
+import mox
+from oslo.config import cfg
 import webob
 import webob.dec
 import webob.exc
@@ -24,11 +27,11 @@ import webob.exc
 from nova.api import ec2
 from nova import context
 from nova import exception
-from nova import flags
 from nova.openstack.common import timeutils
 from nova import test
+from nova import wsgi
 
-FLAGS = flags.FLAGS
+CONF = cfg.CONF
 
 
 @webob.dec.wsgify
@@ -39,7 +42,7 @@ def conditional_forbid(req):
     return 'OK'
 
 
-class LockoutTestCase(test.TestCase):
+class LockoutTestCase(test.NoDBTestCase):
     """Test case for the Lockout middleware."""
     def setUp(self):  # pylint: disable=C0103
         super(LockoutTestCase, self).setUp()
@@ -62,32 +65,32 @@ class LockoutTestCase(test.TestCase):
         return (req.get_response(self.lockout).status_int == 403)
 
     def test_lockout(self):
-        self._send_bad_attempts('test', FLAGS.lockout_attempts)
+        self._send_bad_attempts('test', CONF.lockout_attempts)
         self.assertTrue(self._is_locked_out('test'))
 
     def test_timeout(self):
-        self._send_bad_attempts('test', FLAGS.lockout_attempts)
+        self._send_bad_attempts('test', CONF.lockout_attempts)
         self.assertTrue(self._is_locked_out('test'))
-        timeutils.advance_time_seconds(FLAGS.lockout_minutes * 60)
+        timeutils.advance_time_seconds(CONF.lockout_minutes * 60)
         self.assertFalse(self._is_locked_out('test'))
 
     def test_multiple_keys(self):
-        self._send_bad_attempts('test1', FLAGS.lockout_attempts)
+        self._send_bad_attempts('test1', CONF.lockout_attempts)
         self.assertTrue(self._is_locked_out('test1'))
         self.assertFalse(self._is_locked_out('test2'))
-        timeutils.advance_time_seconds(FLAGS.lockout_minutes * 60)
+        timeutils.advance_time_seconds(CONF.lockout_minutes * 60)
         self.assertFalse(self._is_locked_out('test1'))
         self.assertFalse(self._is_locked_out('test2'))
 
     def test_window_timeout(self):
-        self._send_bad_attempts('test', FLAGS.lockout_attempts - 1)
+        self._send_bad_attempts('test', CONF.lockout_attempts - 1)
         self.assertFalse(self._is_locked_out('test'))
-        timeutils.advance_time_seconds(FLAGS.lockout_window * 60)
-        self._send_bad_attempts('test', FLAGS.lockout_attempts - 1)
+        timeutils.advance_time_seconds(CONF.lockout_window * 60)
+        self._send_bad_attempts('test', CONF.lockout_attempts - 1)
         self.assertFalse(self._is_locked_out('test'))
 
 
-class ExecutorTestCase(test.TestCase):
+class ExecutorTestCase(test.NoDBTestCase):
     def setUp(self):
         super(ExecutorTestCase, self).setUp()
         self.executor = ec2.Executor()
@@ -116,6 +119,15 @@ class ExecutorTestCase(test.TestCase):
         result = self._execute(not_found)
         self.assertIn('i-00000005', self._extract_message(result))
 
+    def test_instance_not_found_none(self):
+        def not_found(context):
+            raise exception.InstanceNotFound(instance_id=None)
+
+        # NOTE(mikal): we want no exception to be raised here, which was what
+        # was happening in bug/1080406
+        result = self._execute(not_found)
+        self.assertIn('None', self._extract_message(result))
+
     def test_snapshot_not_found(self):
         def not_found(context):
             raise exception.SnapshotNotFound(snapshot_id=5)
@@ -127,3 +139,78 @@ class ExecutorTestCase(test.TestCase):
             raise exception.VolumeNotFound(volume_id=5)
         result = self._execute(not_found)
         self.assertIn('vol-00000005', self._extract_message(result))
+
+
+class FakeResponse(object):
+    reason = "Test Reason"
+
+    def __init__(self, status=400):
+        self.status = status
+
+    def read(self):
+        return '{}'
+
+
+class KeystoneAuthTestCase(test.NoDBTestCase):
+    def setUp(self):
+        super(KeystoneAuthTestCase, self).setUp()
+        self.kauth = ec2.EC2KeystoneAuth(conditional_forbid)
+
+    def _validate_ec2_error(self, response, http_status, ec2_code):
+        self.assertEqual(response.status_code, http_status,
+                         'Expected HTTP status %s' % http_status)
+        root_e = etree.XML(response.body)
+        self.assertEqual(root_e.tag, 'Response',
+                         "Top element must be Response.")
+        errors_e = root_e.find('Errors')
+        error_e = errors_e[0]
+        code_e = error_e.find('Code')
+        self.assertIsNotNone(code_e, "Code element must be present.")
+        self.assertEqual(code_e.text, ec2_code)
+
+    def test_no_signature(self):
+        req = wsgi.Request.blank('/test')
+        resp = self.kauth(req)
+        self._validate_ec2_error(resp, 400, 'AuthFailure')
+
+    def test_no_key_id(self):
+        req = wsgi.Request.blank('/test')
+        req.GET['Signature'] = 'test-signature'
+        resp = self.kauth(req)
+        self._validate_ec2_error(resp, 400, 'AuthFailure')
+
+    def test_communication_failure(self):
+        req = wsgi.Request.blank('/test')
+        req.GET['Signature'] = 'test-signature'
+        req.GET['AWSAccessKeyId'] = 'test-key-id'
+
+        conn = httplib.HTTPConnection('/mock')
+        self.mox.StubOutWithMock(httplib.HTTPConnection, 'request')
+        self.mox.StubOutWithMock(httplib.HTTPConnection, 'getresponse')
+        conn.request('POST', mox.IgnoreArg(), body=mox.IgnoreArg(),
+                     headers=mox.IgnoreArg())
+        resp = FakeResponse()
+        conn.getresponse().AndReturn(resp)
+        self.mox.ReplayAll()
+
+        resp = self.kauth(req)
+        self._validate_ec2_error(resp, 400, 'AuthFailure')
+
+    def test_no_result_data(self):
+        req = wsgi.Request.blank('/test')
+        req.GET['Signature'] = 'test-signature'
+        req.GET['AWSAccessKeyId'] = 'test-key-id'
+
+        conn = httplib.HTTPConnection('/mock')
+        self.mox.StubOutWithMock(httplib.HTTPConnection, 'request')
+        self.mox.StubOutWithMock(httplib.HTTPConnection, 'getresponse')
+        self.mox.StubOutWithMock(httplib.HTTPConnection, 'close')
+        conn.request('POST', mox.IgnoreArg(), body=mox.IgnoreArg(),
+                     headers=mox.IgnoreArg())
+        resp = FakeResponse(200)
+        conn.getresponse().AndReturn(resp)
+        conn.close()
+        self.mox.ReplayAll()
+
+        resp = self.kauth(req)
+        self._validate_ec2_error(resp, 400, 'AuthFailure')

@@ -17,9 +17,13 @@
 #    under the License.
 
 import base64
-import logging
 import re
-import socket
+
+import six
+
+from nova.openstack.common.gettextutils import _
+from nova.openstack.common import log as logging
+
 
 LOG = logging.getLogger(__name__)
 
@@ -42,7 +46,7 @@ VALIDATE_PATH_RE = _get_path_validator_regex()
 def validate_str(max_length=None):
 
     def _do(val):
-        if not isinstance(val, basestring):
+        if not isinstance(val, six.string_types):
             return False
         if max_length and len(val) > max_length:
             return False
@@ -92,16 +96,8 @@ def validate_image_path(val):
     return True
 
 
-def validate_ipv4(addr):
-    try:
-        socket.inet_aton(addr)
-    except (socket.error, TypeError):
-        return False
-    return True
-
-
 def validate_user_data(user_data):
-    """Check if the user_data is encoded properly"""
+    """Check if the user_data is encoded properly."""
     try:
         user_data = base64.b64decode(user_data)
     except TypeError:

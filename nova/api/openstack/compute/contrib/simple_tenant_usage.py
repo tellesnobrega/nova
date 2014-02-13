@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -18,16 +18,17 @@
 import datetime
 import urlparse
 
+from webob import exc
+
 from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
 from nova.compute import api
+from nova.compute import flavors
 from nova import exception
-from nova import flags
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import timeutils
 
-
-FLAGS = flags.FLAGS
 authorize_show = extensions.extension_authorizer('compute',
                                                  'simple_tenant_usage:show')
 authorize_list = extensions.extension_authorizer('compute',
@@ -104,6 +105,31 @@ class SimpleTenantUsageController(object):
             # instance hasn't launched, so no charge
             return 0
 
+    def _get_flavor(self, context, compute_api, instance, flavors_cache):
+        """Get flavor information from the instance's system_metadata,
+        allowing a fallback to lookup by-id for deleted instances only.
+        """
+        try:
+            return flavors.extract_flavor(instance)
+        except KeyError:
+            if not instance['deleted']:
+                # Only support the fallback mechanism for deleted instances
+                # that would have been skipped by migration #153
+                raise
+
+        flavor_type = instance['instance_type_id']
+        if flavor_type in flavors_cache:
+            return flavors_cache[flavor_type]
+
+        try:
+            it_ref = compute_api.get_instance_type(context, flavor_type)
+            flavors_cache[flavor_type] = it_ref
+        except exception.FlavorNotFound:
+            # can't bill if there is no instance type
+            it_ref = None
+
+        return it_ref
+
     def _tenant_usages_for_period(self, context, period_start,
                                   period_stop, tenant_id=None, detailed=True):
 
@@ -120,18 +146,9 @@ class SimpleTenantUsageController(object):
             info['hours'] = self._hours_for(instance,
                                             period_start,
                                             period_stop)
-            flavor_type = instance['instance_type_id']
-
-            if not flavors.get(flavor_type):
-                try:
-                    it_ref = compute_api.get_instance_type(context,
-                                                           flavor_type)
-                    flavors[flavor_type] = it_ref
-                except exception.InstanceTypeNotFound:
-                    # can't bill if there is no instance type
-                    continue
-
-            flavor = flavors[flavor_type]
+            flavor = self._get_flavor(context, compute_api, instance, flavors)
+            if not flavor:
+                continue
 
             info['instance_id'] = instance['uuid']
             info['name'] = instance['display_name']
@@ -162,7 +179,7 @@ class SimpleTenantUsageController(object):
 
             info['uptime'] = delta.days * 24 * 3600 + delta.seconds
 
-            if not info['tenant_id'] in rval:
+            if info['tenant_id'] not in rval:
                 summary = {}
                 summary['tenant_id'] = info['tenant_id']
                 if detailed:
@@ -207,17 +224,25 @@ class SimpleTenantUsageController(object):
         period_start = self._parse_datetime(env.get('start', [None])[0])
         period_stop = self._parse_datetime(env.get('end', [None])[0])
 
+        if not period_start < period_stop:
+            msg = _("Invalid start time. The start time cannot occur after "
+                    "the end time.")
+            raise exc.HTTPBadRequest(explanation=msg)
+
         detailed = env.get('detailed', ['0'])[0] == '1'
         return (period_start, period_stop, detailed)
 
     @wsgi.serializers(xml=SimpleTenantUsagesTemplate)
     def index(self, req):
-        """Retrive tenant_usage for all tenants"""
+        """Retrieve tenant_usage for all tenants."""
         context = req.environ['nova.context']
 
         authorize_list(context)
 
         (period_start, period_stop, detailed) = self._get_datetime_range(req)
+        now = timeutils.utcnow()
+        if period_stop > now:
+            period_stop = now
         usages = self._tenant_usages_for_period(context,
                                                 period_start,
                                                 period_stop,
@@ -226,13 +251,16 @@ class SimpleTenantUsageController(object):
 
     @wsgi.serializers(xml=SimpleTenantUsageTemplate)
     def show(self, req, id):
-        """Retrive tenant_usage for a specified tenant"""
+        """Retrieve tenant_usage for a specified tenant."""
         tenant_id = id
         context = req.environ['nova.context']
 
         authorize_show(context, {'project_id': tenant_id})
 
         (period_start, period_stop, ignore) = self._get_datetime_range(req)
+        now = timeutils.utcnow()
+        if period_stop > now:
+            period_stop = now
         usage = self._tenant_usages_for_period(context,
                                                period_start,
                                                period_stop,
@@ -246,7 +274,7 @@ class SimpleTenantUsageController(object):
 
 
 class Simple_tenant_usage(extensions.ExtensionDescriptor):
-    """Simple tenant usage extension"""
+    """Simple tenant usage extension."""
 
     name = "SimpleTenantUsage"
     alias = "os-simple-tenant-usage"

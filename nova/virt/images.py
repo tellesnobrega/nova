@@ -23,13 +23,15 @@ Handling of VM disk images.
 
 import os
 
+from oslo.config import cfg
+
 from nova import exception
-from nova import flags
 from nova.image import glance
-from nova.openstack.common import cfg
+from nova.openstack.common import fileutils
+from nova.openstack.common.gettextutils import _
+from nova.openstack.common import imageutils
 from nova.openstack.common import log as logging
 from nova import utils
-
 
 LOG = logging.getLogger(__name__)
 
@@ -39,71 +41,89 @@ image_opts = [
                 help='Force backing images to raw format'),
 ]
 
-FLAGS = flags.FLAGS
-FLAGS.register_opts(image_opts)
+CONF = cfg.CONF
+CONF.register_opts(image_opts)
 
 
 def qemu_img_info(path):
-    """Return a dict containing the parsed output from qemu-img info."""
+    """Return an object containing the parsed output from qemu-img info."""
+    # TODO(mikal): this code should not be referring to a libvirt specific
+    # flag.
+    if not os.path.exists(path) and CONF.libvirt.images_type != 'rbd':
+        return imageutils.QemuImgInfo()
 
     out, err = utils.execute('env', 'LC_ALL=C', 'LANG=C',
                              'qemu-img', 'info', path)
-
-    # output of qemu-img is 'field: value'
-    data = {}
-    for line in out.splitlines():
-        field, val = line.split(':', 1)
-        if val[0] == " ":
-            val = val[1:]
-        data[field] = val
-
-    return data
+    return imageutils.QemuImgInfo(out)
 
 
-def fetch(context, image_href, path, _user_id, _project_id):
+def convert_image(source, dest, out_format, run_as_root=False):
+    """Convert image to other format."""
+    cmd = ('qemu-img', 'convert', '-O', out_format, source, dest)
+    utils.execute(*cmd, run_as_root=run_as_root)
+
+
+def fetch(context, image_href, path, _user_id, _project_id, max_size=0):
     # TODO(vish): Improve context handling and add owner and auth data
     #             when it is added to glance.  Right now there is no
     #             auth checking in glance, so we assume that access was
     #             checked before we got here.
     (image_service, image_id) = glance.get_remote_image_service(context,
                                                                 image_href)
-    with utils.remove_path_on_error(path):
-        with open(path, "wb") as image_file:
-            image_service.download(context, image_id, image_file)
+    with fileutils.remove_path_on_error(path):
+        image_service.download(context, image_id, dst_path=path)
 
 
-def fetch_to_raw(context, image_href, path, user_id, project_id):
+def fetch_to_raw(context, image_href, path, user_id, project_id, max_size=0):
     path_tmp = "%s.part" % path
-    fetch(context, image_href, path_tmp, user_id, project_id)
+    fetch(context, image_href, path_tmp, user_id, project_id,
+          max_size=max_size)
 
-    with utils.remove_path_on_error(path_tmp):
+    with fileutils.remove_path_on_error(path_tmp):
         data = qemu_img_info(path_tmp)
 
-        fmt = data.get('file format')
+        fmt = data.file_format
         if fmt is None:
             raise exception.ImageUnacceptable(
                 reason=_("'qemu-img info' parsing failed."),
                 image_id=image_href)
 
-        backing_file = data.get('backing file')
+        backing_file = data.backing_file
         if backing_file is not None:
             raise exception.ImageUnacceptable(image_id=image_href,
-                reason=_("fmt=%(fmt)s backed by: %(backing_file)s") % locals())
+                reason=(_("fmt=%(fmt)s backed by: %(backing_file)s") %
+                        {'fmt': fmt, 'backing_file': backing_file}))
 
-        if fmt != "raw" and FLAGS.force_raw_images:
+        # We can't generally shrink incoming images, so disallow
+        # images > size of the flavor we're booting.  Checking here avoids
+        # an immediate DoS where we convert large qcow images to raw
+        # (which may compress well but not be sparse).
+        # TODO(p-draigbrady): loop through all flavor sizes, so that
+        # we might continue here and not discard the download.
+        # If we did that we'd have to do the higher level size checks
+        # irrespective of whether the base image was prepared or not.
+        disk_size = data.virtual_size
+        if max_size and max_size < disk_size:
+            msg = _('%(base)s virtual size %(disk_size)s '
+                    'larger than flavor root disk size %(size)s')
+            LOG.error(msg % {'base': path,
+                             'disk_size': disk_size,
+                             'size': max_size})
+            raise exception.FlavorDiskTooSmall()
+
+        if fmt != "raw" and CONF.force_raw_images:
             staged = "%s.converted" % path
             LOG.debug("%s was %s, converting to raw" % (image_href, fmt))
-            with utils.remove_path_on_error(staged):
-                utils.execute('qemu-img', 'convert', '-O', 'raw', path_tmp,
-                              staged)
+            with fileutils.remove_path_on_error(staged):
+                convert_image(path_tmp, staged, 'raw')
+                os.unlink(path_tmp)
 
                 data = qemu_img_info(staged)
-                if data.get('file format') != "raw":
+                if data.file_format != "raw":
                     raise exception.ImageUnacceptable(image_id=image_href,
                         reason=_("Converted to raw, but format is now %s") %
-                        data.get('file format'))
+                        data.file_format)
 
                 os.rename(staged, path)
-
         else:
             os.rename(path_tmp, path)

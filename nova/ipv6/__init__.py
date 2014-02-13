@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2011 OpenStack, LLC.
+# Copyright (c) 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -14,4 +14,4 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from nova.ipv6.api import *
+from nova.ipv6.api import *  # noqa

@@ -1,7 +1,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 # Copyright (c) 2011 X.commerce, a business unit of eBay Inc.
-# Copyright 2010 OpenStack, LLC
+# Copyright 2010 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -16,7 +16,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-"""Stubouts, mocks and fixtures for the test suite"""
+"""Stubouts, mocks and fixtures for the test suite."""
 
 from nova import db
 from nova import exception
@@ -39,12 +39,27 @@ class FakeModel(object):
     def __repr__(self):
         return '<FakeModel: %s>' % self.values
 
+    def get(self, name):
+        return self.values[name]
+
 
 def stub_out(stubs, funcs):
     """Set the stubs in mapping in the db api."""
     for func in funcs:
         func_name = '_'.join(func.__name__.split('_')[1:])
         stubs.Set(db, func_name, func)
+        stubs.Set(db.api, func_name, func)
+
+
+fixed_ip_fields = {'id': 0,
+                   'network_id': 0,
+                   'address': '192.168.0.100',
+                   'instance': False,
+                   'instance_uuid': 'eb57d790-fc60-4119-a51a-f2b0913bdc93',
+                   'allocated': False,
+                   'virtual_interface_id': 0,
+                   'virtual_interface': None,
+                   'floating_ips': []}
 
 
 def stub_out_db_network_api(stubs):
@@ -65,17 +80,6 @@ def stub_out_db_network_api(stubs):
                       'host': None,
                       'injected': False,
                       'vpn_public_address': '192.168.0.2'}
-
-    fixed_ip_fields = {'id': 0,
-                       'network_id': 0,
-                       'network': FakeModel(network_fields),
-                       'address': '192.168.0.100',
-                       'instance': False,
-                       'instance_id': 0,
-                       'allocated': False,
-                       'virtual_interface_id': 0,
-                       'virtual_interface': None,
-                       'floating_ips': []}
 
     flavor_fields = {'id': 0,
                      'rxtx_cap': 3}
@@ -99,7 +103,8 @@ def stub_out_db_network_api(stubs):
     virtual_interfacees = [virtual_interface_fields]
     networks = [network_fields]
 
-    def fake_floating_ip_allocate_address(context, project_id, pool):
+    def fake_floating_ip_allocate_address(context, project_id, pool,
+                                          auto_assigned=False):
         ips = filter(lambda i: i['fixed_ip_id'] is None and
                                i['project_id'] is None and
                                i['pool'] == pool,
@@ -107,6 +112,7 @@ def stub_out_db_network_api(stubs):
         if not ips:
             raise exception.NoMoreFloatingIps()
         ips[0]['project_id'] = project_id
+        ips[0]['auto_assigned'] = auto_assigned
         return FakeModel(ips[0])
 
     def fake_floating_ip_deallocate(context, address):
@@ -183,7 +189,7 @@ def stub_out_db_network_api(stubs):
         ip['id'] = max([i['id'] for i in fixed_ips] or [-1]) + 1
         for key in values:
             ip[key] = values[key]
-        return ip['address']
+        return ip
 
     def fake_fixed_ip_disassociate(context, address):
         ips = filter(lambda i: i['address'] == address,
@@ -197,8 +203,11 @@ def stub_out_db_network_api(stubs):
     def fake_fixed_ip_disassociate_all_by_timeout(context, host, time):
         return 0
 
-    def fake_fixed_ip_get_by_instance(context, instance_id):
-        ips = filter(lambda i: i['instance_id'] == instance_id,
+    def fake_fixed_ip_get_all(context):
+        return [FakeModel(i) for i in fixed_ips]
+
+    def fake_fixed_ip_get_by_instance(context, instance_uuid):
+        ips = filter(lambda i: i['instance_uuid'] == instance_uuid,
                      fixed_ips)
         return [FakeModel(i) for i in ips]
 
@@ -207,15 +216,6 @@ def stub_out_db_network_api(stubs):
                      fixed_ips)
         if ips:
             return FakeModel(ips[0])
-
-    def fake_fixed_ip_get_network(context, address):
-        ips = filter(lambda i: i['address'] == address,
-                     fixed_ips)
-        if ips:
-            nets = filter(lambda n: n['id'] == ips[0]['network_id'],
-                          networks)
-            if nets:
-                return FakeModel(nets[0])
 
     def fake_fixed_ip_update(context, address, values):
         ips = filter(lambda i: i['address'] == address,
@@ -230,7 +230,7 @@ def stub_out_db_network_api(stubs):
                         continue
                     fixed_ip_fields['virtual_interface'] = FakeModel(vif[0])
 
-    def fake_instance_type_get(context, id):
+    def fake_flavor_get(context, id):
         if flavor_fields['id'] == id:
             return FakeModel(flavor_fields)
 
@@ -284,10 +284,6 @@ def stub_out_db_network_api(stubs):
         nets = filter(lambda n: n['host'] == host, networks)
         return [FakeModel(n) for n in nets]
 
-    def fake_network_get_all_by_instance(context, instance_id):
-        nets = filter(lambda n: n['instance_id'] == instance_id, networks)
-        return [FakeModel(n) for n in nets]
-
     def fake_network_set_host(context, network_id, host_id):
         nets = filter(lambda n: n['id'] == network_id, networks)
         for net in nets:
@@ -316,11 +312,11 @@ def stub_out_db_network_api(stubs):
              fake_fixed_ip_create,
              fake_fixed_ip_disassociate,
              fake_fixed_ip_disassociate_all_by_timeout,
+             fake_fixed_ip_get_all,
              fake_fixed_ip_get_by_instance,
              fake_fixed_ip_get_by_address,
-             fake_fixed_ip_get_network,
              fake_fixed_ip_update,
-             fake_instance_type_get,
+             fake_flavor_get,
              fake_virtual_interface_create,
              fake_virtual_interface_delete_by_instance,
              fake_virtual_interface_get_by_instance,
@@ -329,7 +325,6 @@ def stub_out_db_network_api(stubs):
              fake_network_get,
              fake_network_get_all,
              fake_network_get_all_by_host,
-             fake_network_get_all_by_instance,
              fake_network_set_host,
              fake_network_update,
              fake_project_get_networks]
@@ -342,51 +337,56 @@ def stub_out_db_instance_api(stubs, injected=True):
 
     INSTANCE_TYPES = {
         'm1.tiny': dict(id=2,
+                        name='m1.tiny',
                         memory_mb=512,
                         vcpus=1,
                         vcpu_weight=None,
                         root_gb=0,
                         ephemeral_gb=10,
                         flavorid=1,
-                        rxtx_cap=1,
+                        rxtx_factor=1.0,
                         swap=0),
         'm1.small': dict(id=5,
+                         name='m1.small',
                          memory_mb=2048,
                          vcpus=1,
                          vcpu_weight=None,
                          root_gb=20,
                          ephemeral_gb=0,
                          flavorid=2,
-                         rxtx_cap=2,
+                         rxtx_factor=1.0,
                          swap=1024),
         'm1.medium':
             dict(id=1,
+                 name='m1.medium',
                  memory_mb=4096,
                  vcpus=2,
                  vcpu_weight=None,
                  root_gb=40,
                  ephemeral_gb=40,
                  flavorid=3,
-                 rxtx_cap=3,
+                 rxtx_factor=1.0,
                  swap=0),
         'm1.large': dict(id=3,
+                         name='m1.large',
                          memory_mb=8192,
                          vcpus=4,
-                         vcpu_weight=None,
+                         vcpu_weight=10,
                          root_gb=80,
                          ephemeral_gb=80,
                          flavorid=4,
-                         rxtx_cap=4,
+                         rxtx_factor=1.0,
                          swap=0),
         'm1.xlarge':
             dict(id=4,
+                 name='m1.xlarge',
                  memory_mb=16384,
                  vcpus=8,
                  vcpu_weight=None,
                  root_gb=160,
                  ephemeral_gb=160,
                  flavorid=5,
-                 rxtx_cap=5,
+                 rxtx_factor=1.0,
                  swap=0)}
 
     flat_network_fields = {'id': 'fake_flat',
@@ -420,40 +420,23 @@ def stub_out_db_instance_api(stubs, injected=True):
                        'address_v6': 'fe80::a00:3',
                        'network_id': 'fake_flat'}
 
-    def fake_instance_type_get_all(context, inactive=0, filters=None):
+    def fake_flavor_get_all(context, inactive=0, filters=None):
         return INSTANCE_TYPES.values()
 
-    def fake_instance_type_get_by_name(context, name):
+    def fake_flavor_get_by_name(context, name):
         return INSTANCE_TYPES[name]
 
-    def fake_instance_type_get(context, id):
+    def fake_flavor_get(context, id):
         for name, inst_type in INSTANCE_TYPES.iteritems():
             if str(inst_type['id']) == str(id):
                 return inst_type
         return None
 
-    def fake_network_get_by_instance(context, instance_id):
-        # Even instance numbers are on vlan networks
-        if instance_id % 2 == 0:
-            return FakeModel(vlan_network_fields)
-        else:
-            return FakeModel(flat_network_fields)
-
-    def fake_network_get_all_by_instance(context, instance_id):
-        # Even instance numbers are on vlan networks
-        if instance_id % 2 == 0:
-            return [FakeModel(vlan_network_fields)]
-        else:
-            return [FakeModel(flat_network_fields)]
-
     def fake_fixed_ip_get_by_instance(context, instance_id):
         return [FakeModel(fixed_ip_fields)]
 
-    funcs = [fake_network_get_by_instance,
-             fake_network_get_all_by_instance,
-             fake_instance_type_get_all,
-             fake_instance_type_get_by_name,
-             fake_instance_type_get,
-             fake_network_get_all_by_instance,
+    funcs = [fake_flavor_get_all,
+             fake_flavor_get_by_name,
+             fake_flavor_get,
              fake_fixed_ip_get_by_instance]
     stub_out(stubs, funcs)

@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -18,7 +18,14 @@
 import os.path
 
 from lxml import etree
+import six
+from xml.dom import minidom
+from xml.parsers import expat
+from xml import sax
+from xml.sax import expatreader
 
+from nova import exception
+from nova.openstack.common.gettextutils import _
 from nova import utils
 
 
@@ -28,12 +35,12 @@ XMLNS_COMMON_V10 = 'http://docs.openstack.org/common/api/v1.0'
 XMLNS_ATOM = 'http://www.w3.org/2005/Atom'
 
 
-def validate_schema(xml, schema_name):
+def validate_schema(xml, schema_name, version='v1.1'):
     if isinstance(xml, str):
         xml = etree.fromstring(xml)
-    base_path = 'nova/api/openstack/compute/schemas/v1.1/'
-    if schema_name in ('atom', 'atom-link'):
-        base_path = 'nova/api/openstack/compute/schemas/'
+    base_path = 'nova/api/openstack/compute/schemas/'
+    if schema_name not in ('atom', 'atom-link'):
+        base_path += '%s/' % version
     schema_path = os.path.join(utils.novadir(),
                                '%s%s.rng' % (base_path, schema_name))
     schema_doc = etree.parse(schema_path)
@@ -74,6 +81,8 @@ class Selector(object):
             if callable(elem):
                 obj = elem(obj)
             else:
+                if obj == '':
+                    return ''
                 # Use indexing
                 try:
                     obj = obj[elem]
@@ -92,6 +101,16 @@ def get_items(obj):
     """Get items in obj."""
 
     return list(obj.items())
+
+
+def get_items_without_dict(obj):
+    """Get items in obj but omit any items containing a dict."""
+
+    obj_list = list(obj.items())
+    for item in obj_list:
+        if isinstance(list(item)[1], dict):
+            obj_list.remove(item)
+    return obj_list
 
 
 class EmptyStringSelector(Selector):
@@ -135,7 +154,7 @@ class TemplateElement(object):
     """Represent an element in the template."""
 
     def __init__(self, tag, attrib=None, selector=None, subselector=None,
-                 **extra):
+                 colon_ns=False, **extra):
         """Initialize an element.
 
         Initializes an element in the template.  Keyword arguments
@@ -153,6 +172,9 @@ class TemplateElement(object):
                             This is used to further refine the datum
                             object returned by selector in the event
                             that it is a list of objects.
+        :colon_ns: An optional flag indicating whether to support k:v
+                   type tagname, if True the k:v type tagname will
+                   be supported by adding the k into the namespace.
         """
 
         # Convert selector into a Selector
@@ -172,6 +194,7 @@ class TemplateElement(object):
         self._text = None
         self._children = []
         self._childmap = {}
+        self.colon_ns = colon_ns
 
         # Run the incoming attributes through set() so that they
         # become selectorized
@@ -201,7 +224,7 @@ class TemplateElement(object):
     def __getitem__(self, idx):
         """Retrieve a child node by index or name."""
 
-        if isinstance(idx, basestring):
+        if isinstance(idx, six.string_types):
             # Allow access by node name
             return self._childmap[idx]
         else:
@@ -361,6 +384,15 @@ class TemplateElement(object):
             tagname = self.tag(datum)
         else:
             tagname = self.tag
+
+        if self.colon_ns:
+            if ':' in tagname:
+                if nsmap is None:
+                    nsmap = {}
+                colon_key, colon_name = tagname.split(':')
+                nsmap[colon_key] = colon_key
+                tagname = '{%s}%s' % (colon_key, colon_name)
+
         elem = etree.Element(tagname, nsmap=nsmap)
 
         # If we have a parent, append the node to the parent
@@ -490,7 +522,7 @@ class TemplateElement(object):
 
 
 def SubTemplateElement(parent, tag, attrib=None, selector=None,
-                       subselector=None, **extra):
+                       subselector=None, colon_ns=False, **extra):
     """Create a template element as a child of another.
 
     Corresponds to the etree.SubElement interface.  Parameters are as
@@ -503,7 +535,7 @@ def SubTemplateElement(parent, tag, attrib=None, selector=None,
 
     # Get a TemplateElement
     elem = TemplateElement(tag, attrib=attrib, selector=selector,
-                           subselector=subselector)
+                           subselector=subselector, colon_ns=colon_ns)
 
     # Append the parent safely
     if parent is not None:
@@ -734,10 +766,9 @@ class MasterTemplate(Template):
 
             # Make sure we have a tree match
             if slave.root.tag != self.root.tag:
-                slavetag = slave.root.tag
-                mastertag = self.root.tag
-                msg = _("Template tree mismatch; adding slave %(slavetag)s "
-                        "to master %(mastertag)s") % locals()
+                msg = _("Template tree mismatch; adding slave %(slavetag)s to "
+                        "master %(mastertag)s") % {'slavetag': slave.root.tag,
+                                                   'mastertag': self.root.tag}
                 raise ValueError(msg)
 
             # Make sure slave applies to this template
@@ -873,15 +904,20 @@ def make_links(parent, selector=None):
     return elem
 
 
-def make_flat_dict(name, selector=None, subselector=None, ns=None):
+def make_flat_dict(name, selector=None, subselector=None,
+                   ns=None, colon_ns=False, root=None,
+                   ignore_sub_dicts=False):
     """
     Utility for simple XML templates that traditionally used
     XMLDictSerializer with no metadata.  Returns a template element
     where the top-level element has the given tag name, and where
     sub-elements have tag names derived from the object's keys and
-    text derived from the object's values.  This only works for flat
-    dictionary objects, not dictionaries containing nested lists or
-    dictionaries.
+    text derived from the object's values.
+
+    :param root: if None, this will create the root.
+    :param ignore_sub_dicts: If True, ignores any dict objects inside the
+                             object. If False, causes an error if there is a
+                             dict object present.
     """
 
     # Set up the names we need...
@@ -894,14 +930,71 @@ def make_flat_dict(name, selector=None, subselector=None, ns=None):
 
     if selector is None:
         selector = name
-
-    # Build the root element
-    root = TemplateElement(elemname, selector=selector,
-                           subselector=subselector)
-
+    if not root:
+        # Build the root element
+        root = TemplateElement(elemname, selector=selector,
+                               subselector=subselector, colon_ns=colon_ns)
+    choice = get_items if ignore_sub_dicts is False else get_items_without_dict
     # Build an element to represent all the keys and values
-    elem = SubTemplateElement(root, tagname, selector=get_items)
+    elem = SubTemplateElement(root, tagname, selector=choice,
+                              colon_ns=colon_ns)
     elem.text = 1
 
     # Return the template
     return root
+
+
+class ProtectedExpatParser(expatreader.ExpatParser):
+    """An expat parser which disables DTD's and entities by default."""
+
+    def __init__(self, forbid_dtd=True, forbid_entities=True,
+                 *args, **kwargs):
+        # Python 2.x old style class
+        expatreader.ExpatParser.__init__(self, *args, **kwargs)
+        self.forbid_dtd = forbid_dtd
+        self.forbid_entities = forbid_entities
+
+    def start_doctype_decl(self, name, sysid, pubid, has_internal_subset):
+        raise ValueError("Inline DTD forbidden")
+
+    def entity_decl(self, entityName, is_parameter_entity, value, base,
+                    systemId, publicId, notationName):
+        raise ValueError("<!ENTITY> entity declaration forbidden")
+
+    def unparsed_entity_decl(self, name, base, sysid, pubid, notation_name):
+        # expat 1.2
+        raise ValueError("<!ENTITY> unparsed entity forbidden")
+
+    def external_entity_ref(self, context, base, systemId, publicId):
+        raise ValueError("<!ENTITY> external entity forbidden")
+
+    def notation_decl(self, name, base, sysid, pubid):
+        raise ValueError("<!ENTITY> notation forbidden")
+
+    def reset(self):
+        expatreader.ExpatParser.reset(self)
+        if self.forbid_dtd:
+            self._parser.StartDoctypeDeclHandler = self.start_doctype_decl
+            self._parser.EndDoctypeDeclHandler = None
+        if self.forbid_entities:
+            self._parser.EntityDeclHandler = self.entity_decl
+            self._parser.UnparsedEntityDeclHandler = self.unparsed_entity_decl
+            self._parser.ExternalEntityRefHandler = self.external_entity_ref
+            self._parser.NotationDeclHandler = self.notation_decl
+            try:
+                self._parser.SkippedEntityHandler = None
+            except AttributeError:
+                # some pyexpat versions do not support SkippedEntity
+                pass
+
+
+def safe_minidom_parse_string(xml_string):
+    """Parse an XML string using minidom safely."""
+    try:
+        return minidom.parseString(xml_string, parser=ProtectedExpatParser())
+    except (sax.SAXParseException, ValueError,
+            expat.ExpatError, LookupError) as e:
+        #NOTE(Vijaya Erukala): XML input such as
+        #                      <?xml version="1.0" encoding="TF-8"?>
+        #                      raises LookupError: unknown encoding: TF-8
+        raise exception.MalformedRequestBody(reason=str(e))

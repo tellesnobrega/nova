@@ -21,14 +21,25 @@
 import base64
 import json
 import os
+import posixpath
+
+from oslo.config import cfg
 
 from nova.api.ec2 import ec2utils
+from nova.api.metadata import password
 from nova import block_device
+from nova.compute import flavors
+from nova import conductor
 from nova import context
-from nova import db
-from nova import flags
 from nova import network
-from nova.openstack.common import cfg
+from nova.objects import base as obj_base
+from nova.objects import instance as instance_obj
+from nova.objects import security_group as secgroup_obj
+from nova.openstack.common.gettextutils import _
+from nova.openstack.common import importutils
+from nova.openstack.common import log as logging
+from nova.openstack.common import timeutils
+from nova import utils
 from nova.virt import netutils
 
 
@@ -38,17 +49,15 @@ metadata_opts = [
                         '2007-12-15 2008-02-01 2008-09-01'),
                help=('List of metadata versions to skip placing into the '
                      'config drive')),
-    ]
+    cfg.StrOpt('vendordata_driver',
+               default='nova.api.metadata.vendordata_json.JsonFileVendorData',
+               help='Driver to use for vendor data'),
+]
 
-FLAGS = flags.FLAGS
-flags.DECLARE('dhcp_domain', 'nova.network.manager')
-FLAGS.register_opts(metadata_opts)
+CONF = cfg.CONF
+CONF.register_opts(metadata_opts)
+CONF.import_opt('dhcp_domain', 'nova.network.manager')
 
-
-_DEFAULT_MAPPINGS = {'ami': 'sda1',
-                     'ephemeral0': 'sda2',
-                     'root': block_device.DEFAULT_ROOT_DEV_NAME,
-                     'swap': 'sda3'}
 
 VERSIONS = [
     '1.0',
@@ -62,11 +71,22 @@ VERSIONS = [
     '2009-04-04',
 ]
 
-OPENSTACK_VERSIONS = ["2012-08-10"]
+FOLSOM = '2012-08-10'
+GRIZZLY = '2013-04-04'
+HAVANA = '2013-10-17'
+OPENSTACK_VERSIONS = [
+    FOLSOM,
+    GRIZZLY,
+    HAVANA,
+]
 
 CONTENT_DIR = "content"
 MD_JSON_NAME = "meta_data.json"
+VD_JSON_NAME = "vendor_data.json"
 UD_NAME = "user_data"
+PASS_NAME = "password"
+
+LOG = logging.getLogger(__name__)
 
 
 class InvalidMetadataVersion(Exception):
@@ -80,7 +100,8 @@ class InvalidMetadataPath(Exception):
 class InstanceMetadata():
     """Instance metadata."""
 
-    def __init__(self, instance, address=None, content=[], extra_md=None):
+    def __init__(self, instance, address=None, content=None, extra_md=None,
+                 conductor_api=None, network_info=None, vd_driver=None):
         """Creation of this object should basically cover all time consuming
         collection.  Methods after that should not cause time delays due to
         network operations or lengthy cpu operations.
@@ -88,50 +109,47 @@ class InstanceMetadata():
         The user should then get a single instance and make multiple method
         calls on it.
         """
+        if not content:
+            content = []
+
+        ctxt = context.get_admin_context()
+
+        # NOTE(danms): This should be removed after bp:compute-manager-objects
+        if not isinstance(instance, instance_obj.Instance):
+            instance = instance_obj.Instance._from_db_object(
+                ctxt, instance_obj.Instance(), instance,
+                expected_attrs=['metadata', 'system_metadata'])
 
         self.instance = instance
         self.extra_md = extra_md
 
-        ctxt = context.get_admin_context()
+        if conductor_api:
+            capi = conductor_api
+        else:
+            capi = conductor.API()
 
-        services = db.service_get_all_by_host(ctxt.elevated(),
-                instance['host'])
         self.availability_zone = ec2utils.get_availability_zone_by_host(
-                services, instance['host'])
+                instance['host'], capi)
 
-        self.ip_info = ec2utils.get_ip_info_for_instance(ctxt, instance)
+        self.security_groups = secgroup_obj.SecurityGroupList.get_by_instance(
+            ctxt, instance)
 
-        self.security_groups = db.security_group_get_by_instance(ctxt,
-                                                            instance['id'])
-
-        self.mappings = _format_instance_mapping(ctxt, instance)
+        self.mappings = _format_instance_mapping(capi, ctxt, instance)
 
         if instance.get('user_data', None) is not None:
             self.userdata_raw = base64.b64decode(instance['user_data'])
         else:
             self.userdata_raw = None
 
-        self.ec2_ids = {}
-
-        self.ec2_ids['instance-id'] = ec2utils.id_to_ec2_inst_id(
-                instance['id'])
-        self.ec2_ids['ami-id'] = ec2utils.glance_id_to_ec2_id(ctxt,
-            instance['image_ref'])
-
-        for image_type in ['kernel', 'ramdisk']:
-            if self.instance.get('%s_id' % image_type):
-                image_id = self.instance['%s_id' % image_type]
-                ec2_image_type = ec2utils.image_type(image_type)
-                ec2_id = ec2utils.glance_id_to_ec2_id(ctxt, image_id,
-                                                      ec2_image_type)
-                self.ec2_ids['%s-id' % image_type] = ec2_id
+        self.ec2_ids = capi.get_ec2_ids(ctxt,
+                                        obj_base.obj_to_primitive(instance))
 
         self.address = address
 
         # expose instance metadata.
-        self.launch_metadata = {}
-        for item in instance.get('metadata', []):
-            self.launch_metadata[item['key']] = item['value']
+        self.launch_metadata = utils.instance_meta(instance)
+
+        self.password = password.extract_password(instance)
 
         self.uuid = instance.get('uuid')
 
@@ -139,8 +157,12 @@ class InstanceMetadata():
         self.files = []
 
         # get network info, and the rendered network template
-        ctxt = context.get_admin_context()
-        network_info = network.API().get_instance_nw_info(ctxt, instance)
+        if network_info is None:
+            network_info = network.API().get_instance_nw_info(ctxt,
+                                                              instance)
+
+        self.ip_info = \
+                ec2utils.get_ip_info_for_instance_from_nw_info(network_info)
 
         self.network_config = None
         cfg = netutils.get_injected_network_template(network_info)
@@ -161,6 +183,14 @@ class InstanceMetadata():
                 'content_path': "/%s/%s" % (CONTENT_DIR, key)})
             self.content[key] = contents
 
+        if vd_driver is None:
+            vdclass = importutils.import_class(CONF.vendordata_driver)
+        else:
+            vdclass = vd_driver
+
+        self.vddriver = vdclass(instance=instance, address=address,
+                                extra_md=extra_md, network_info=network_info)
+
     def get_ec2_metadata(self, version):
         if version == "latest":
             version = VERSIONS[-1]
@@ -168,9 +198,13 @@ class InstanceMetadata():
         if version not in VERSIONS:
             raise InvalidMetadataVersion(version)
 
-        hostname = "%s.%s" % (self.instance['hostname'], FLAGS.dhcp_domain)
+        hostname = self._get_hostname()
+
         floating_ips = self.ip_info['floating_ips']
         floating_ip = floating_ips and floating_ips[0] or ''
+
+        fixed_ips = self.ip_info['fixed_ips']
+        fixed_ip = fixed_ips and fixed_ips[0] or ''
 
         fmt_sgroups = [x['name'] for x in self.security_groups]
 
@@ -180,7 +214,7 @@ class InstanceMetadata():
             'ami-manifest-path': 'FIXME',
             'instance-id': self.ec2_ids['instance-id'],
             'hostname': hostname,
-            'local-ipv4': self.address,
+            'local-ipv4': self.address or fixed_ip,
             'reservation-id': self.instance['reservation_id'],
             'security-groups': fmt_sgroups}
 
@@ -208,7 +242,8 @@ class InstanceMetadata():
             meta_data['product-codes'] = []
 
         if self._check_version('2007-08-29', version):
-            meta_data['instance-type'] = self.instance['instance_type']['name']
+            instance_type = flavors.extract_flavor(self.instance)
+            meta_data['instance-type'] = instance_type['name']
 
         if False and self._check_version('2007-10-10', version):
             # TODO(vish): store ancestor ids
@@ -261,6 +296,10 @@ class InstanceMetadata():
             ret = [MD_JSON_NAME]
             if self.userdata_raw is not None:
                 ret.append(UD_NAME)
+            if self._check_os_version(GRIZZLY, version):
+                ret.append(PASS_NAME)
+            if self._check_os_version(HAVANA, version):
+                ret.append(VD_JSON_NAME)
             return ret
 
         if path == UD_NAME:
@@ -268,10 +307,15 @@ class InstanceMetadata():
                 raise KeyError(path)
             return self.userdata_raw
 
+        if path == PASS_NAME and self._check_os_version(GRIZZLY, version):
+            return password.handle_password
+
+        if path == VD_JSON_NAME and self._check_os_version(HAVANA, version):
+            return json.dumps(self.vddriver.get())
+
         if path != MD_JSON_NAME:
             raise KeyError(path)
 
-        # right now, the only valid path is metadata.json
         metadata = {}
         metadata['uuid'] = self.uuid
 
@@ -295,10 +339,14 @@ class InstanceMetadata():
                 self.instance['key_name']: self.instance['key_data']
             }
 
-        metadata['hostname'] = "%s.%s" % (self.instance['hostname'],
-                                          FLAGS.dhcp_domain)
+        metadata['hostname'] = self._get_hostname()
 
         metadata['name'] = self.instance['display_name']
+        metadata['launch_index'] = self.instance['launch_index']
+        metadata['availability_zone'] = self.availability_zone
+
+        if self._check_os_version(GRIZZLY, version):
+            metadata['random_seed'] = base64.b64encode(os.urandom(512))
 
         data = {
             MD_JSON_NAME: json.dumps(metadata),
@@ -306,14 +354,22 @@ class InstanceMetadata():
 
         return data[path]
 
-    def _check_version(self, required, requested):
-        return VERSIONS.index(requested) >= VERSIONS.index(required)
+    def _check_version(self, required, requested, versions=VERSIONS):
+        return versions.index(requested) >= versions.index(required)
+
+    def _check_os_version(self, required, requested):
+        return self._check_version(required, requested, OPENSTACK_VERSIONS)
+
+    def _get_hostname(self):
+        return "%s%s%s" % (self.instance['hostname'],
+                           '.' if CONF.dhcp_domain else '',
+                           CONF.dhcp_domain)
 
     def lookup(self, path):
         if path == "" or path[0] != "/":
-            path = os.path.normpath("/" + path)
+            path = posixpath.normpath("/" + path)
         else:
-            path = os.path.normpath(path)
+            path = posixpath.normpath(path)
 
         # fix up requests, prepending /ec2 to anything that does not match
         path_tokens = path.split('/')[1:]
@@ -330,7 +386,14 @@ class InstanceMetadata():
         # specifically handle the top level request
         if len(path_tokens) == 1:
             if path_tokens[0] == "openstack":
-                versions = OPENSTACK_VERSIONS + ["latest"]
+                # NOTE(vish): don't show versions that are in the future
+                today = timeutils.utcnow().strftime("%Y-%m-%d")
+                versions = [v for v in OPENSTACK_VERSIONS if v <= today]
+                if OPENSTACK_VERSIONS != versions:
+                    LOG.debug(_("future versions %s hidden in version list"),
+                              [v for v in OPENSTACK_VERSIONS
+                               if v not in versions])
+                versions += ["latest"]
             else:
                 versions = VERSIONS + ["latest"]
             return versions
@@ -349,7 +412,7 @@ class InstanceMetadata():
         """Yields (path, value) tuples for metadata elements."""
         # EC2 style metadata
         for version in VERSIONS + ["latest"]:
-            if version in FLAGS.config_drive_skip_versions.split(' '):
+            if version in CONF.config_drive_skip_versions.split(' '):
                 continue
 
             data = self.get_ec2_metadata(version)
@@ -366,7 +429,8 @@ class InstanceMetadata():
             filepath = os.path.join('ec2', version, 'meta-data.json')
             yield (filepath, json.dumps(data['meta-data']))
 
-        for version in OPENSTACK_VERSIONS + ["latest"]:
+        ALL_OPENSTACK_VERSIONS = OPENSTACK_VERSIONS + ["latest"]
+        for version in ALL_OPENSTACK_VERSIONS:
             path = 'openstack/%s/%s' % (version, MD_JSON_NAME)
             yield (path, self.lookup(path))
 
@@ -374,63 +438,50 @@ class InstanceMetadata():
             if self.userdata_raw is not None:
                 yield (path, self.lookup(path))
 
+            if self._check_version(HAVANA, version, ALL_OPENSTACK_VERSIONS):
+                path = 'openstack/%s/%s' % (version, VD_JSON_NAME)
+                yield (path, self.lookup(path))
+
         for (cid, content) in self.content.iteritems():
             yield ('%s/%s/%s' % ("openstack", CONTENT_DIR, cid), content)
 
 
-def get_metadata_by_address(address):
+class VendorDataDriver(object):
+    """The base VendorData Drivers should inherit from."""
+
+    def __init__(self, *args, **kwargs):
+        """Init method should do all expensive operations."""
+        self._data = {}
+
+    def get(self):
+        """Return a dictionary of primitives to be rendered in metadata
+
+        :return: A dictionary or primitives.
+        """
+        return self._data
+
+
+def get_metadata_by_address(conductor_api, address):
     ctxt = context.get_admin_context()
     fixed_ip = network.API().get_fixed_ip_by_address(ctxt, address)
 
-    instance = db.instance_get_by_uuid(ctxt, fixed_ip['instance_uuid'])
+    return get_metadata_by_instance_id(conductor_api,
+                                       fixed_ip['instance_uuid'],
+                                       address,
+                                       ctxt)
+
+
+def get_metadata_by_instance_id(conductor_api, instance_id, address,
+                                ctxt=None):
+    ctxt = ctxt or context.get_admin_context()
+    instance = instance_obj.Instance.get_by_uuid(ctxt, instance_id)
     return InstanceMetadata(instance, address)
 
 
-def _format_instance_mapping(ctxt, instance):
-    root_device_name = instance['root_device_name']
-    if root_device_name is None:
-        return _DEFAULT_MAPPINGS
-
-    mappings = {}
-    mappings['ami'] = block_device.strip_dev(root_device_name)
-    mappings['root'] = root_device_name
-    default_ephemeral_device = instance.get('default_ephemeral_device')
-    if default_ephemeral_device:
-        mappings['ephemeral0'] = default_ephemeral_device
-    default_swap_device = instance.get('default_swap_device')
-    if default_swap_device:
-        mappings['swap'] = default_swap_device
-    ebs_devices = []
-
-    # 'ephemeralN', 'swap' and ebs
-    for bdm in db.block_device_mapping_get_all_by_instance(
-        ctxt, instance['uuid']):
-        if bdm['no_device']:
-            continue
-
-        # ebs volume case
-        if (bdm['volume_id'] or bdm['snapshot_id']):
-            ebs_devices.append(bdm['device_name'])
-            continue
-
-        virtual_name = bdm['virtual_name']
-        if not virtual_name:
-            continue
-
-        if block_device.is_swap_or_ephemeral(virtual_name):
-            mappings[virtual_name] = bdm['device_name']
-
-    # NOTE(yamahata): I'm not sure how ebs device should be numbered.
-    #                 Right now sort by device name for deterministic
-    #                 result.
-    if ebs_devices:
-        nebs = 0
-        ebs_devices.sort()
-        for ebs in ebs_devices:
-            mappings['ebs%d' % nebs] = ebs
-            nebs += 1
-
-    return mappings
+def _format_instance_mapping(conductor_api, ctxt, instance):
+    bdms = conductor_api.block_device_mapping_get_all_by_instance(
+               ctxt, instance)
+    return block_device.instance_block_mapping(instance, bdms)
 
 
 def ec2_md_print(data):

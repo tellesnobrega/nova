@@ -21,16 +21,16 @@ APIRequest class
 """
 
 import datetime
+from lxml import etree
 # TODO(termie): replace minidom with etree
 from xml.dom import minidom
 
 from nova.api.ec2 import ec2utils
 from nova import exception
-from nova import flags
+from nova.openstack.common.gettextutils import _
 from nova.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
-FLAGS = flags.FLAGS
 
 
 def _underscore_to_camelcase(str):
@@ -43,7 +43,7 @@ def _underscore_to_xmlcase(str):
 
 
 def _database_to_isoformat(datetimeobj):
-    """Return a xs:dateTime parsable string from datatime"""
+    """Return a xs:dateTime parsable string from datatime."""
     return datetimeobj.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + 'Z'
 
 
@@ -59,11 +59,10 @@ class APIRequest(object):
             method = getattr(self.controller,
                              ec2utils.camelcase_to_underscore(self.action))
         except AttributeError:
-            controller = self.controller
-            action = self.action
-            _error = _('Unsupported API request: controller = %(controller)s,'
-                    ' action = %(action)s') % locals()
-            LOG.exception(_error)
+            LOG.exception(_('Unsupported API request: controller = '
+                            '%(controller)s, action = %(action)s'),
+                          {'controller': self.controller,
+                           'action': self.action})
             # TODO(gundlach): Raise custom exception, trap in apiserver,
             #       and reraise as 400 error.
             raise exception.InvalidRequest()
@@ -98,6 +97,9 @@ class APIRequest(object):
         xml.appendChild(response_el)
 
         response = xml.toxml()
+        root = etree.fromstring(response)
+        response = etree.tostring(root, pretty_print=True)
+
         xml.unlink()
 
         # Don't write private key to log

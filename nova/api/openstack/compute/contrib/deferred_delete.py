@@ -1,4 +1,4 @@
-# Copyright 2011 OpenStack, LLC
+# Copyright 2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -22,10 +22,8 @@ from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova import compute
 from nova import exception
-from nova.openstack.common import log as logging
 
 
-LOG = logging.getLogger(__name__)
 authorize = extensions.extension_authorizer('compute', 'deferred_delete')
 
 
@@ -39,9 +37,13 @@ class DeferredDeleteController(wsgi.Controller):
         """Restore a previously deleted instance."""
         context = req.environ["nova.context"]
         authorize(context)
-        instance = self.compute_api.get(context, id)
+        instance = self.compute_api.get(context, id, want_objects=True)
         try:
             self.compute_api.restore(context, instance)
+        except exception.QuotaError as error:
+            raise webob.exc.HTTPRequestEntityTooLarge(
+                                        explanation=error.format_message(),
+                                        headers={'Retry-After': 0})
         except exception.InstanceInvalidState as state_error:
             common.raise_http_conflict_for_instance_invalid_state(state_error,
                     'restore')
@@ -52,7 +54,7 @@ class DeferredDeleteController(wsgi.Controller):
         """Force delete of instance before deferred cleanup."""
         context = req.environ["nova.context"]
         authorize(context)
-        instance = self.compute_api.get(context, id)
+        instance = self.compute_api.get(context, id, want_objects=True)
         try:
             self.compute_api.force_delete(context, instance)
         except exception.InstanceInvalidState as state_error:
@@ -62,7 +64,7 @@ class DeferredDeleteController(wsgi.Controller):
 
 
 class Deferred_delete(extensions.ExtensionDescriptor):
-    """Instance deferred delete"""
+    """Instance deferred delete."""
 
     name = "DeferredDelete"
     alias = "os-deferred-delete"

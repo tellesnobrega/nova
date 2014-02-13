@@ -6,9 +6,9 @@ nova-manage
 control and manage cloud computer instances and images
 ------------------------------------------------------
 
-:Author: openstack@lists.launchpad.net
+:Author: openstack@lists.openstack.org
 :Date:   2012-04-05
-:Copyright: OpenStack LLC
+:Copyright: OpenStack Foundation
 :Version: 2012.1
 :Manual section: 1
 :Manual group: cloud computing
@@ -89,7 +89,7 @@ Nova VPN
 
 ``nova-manage vpn list``
 
-    Displays a list of projects, their IP prot numbers, and what state they're in.
+    Displays a list of projects, their IP port numbers, and what state they're in.
 
 ``nova-manage vpn run <projectname>``
 

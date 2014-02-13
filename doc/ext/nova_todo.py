@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-# This is a hack of the builtin todo extension, to make the todo_list more user friendly
+# This is a hack of the builtin todo extension, to make the todo_list
+# more user friendly.
 
 from sphinx.ext.todo import *
 import re
+
 
 def _(s):
     return s
@@ -20,12 +22,11 @@ def process_todo_nodes(app, doctree, fromdocname):
     if not hasattr(env, 'todo_all_todos'):
         env.todo_all_todos = []
 
-
     # remove the item that was added in the constructor, since I'm tired of
     # reading through docutils for the proper way to construct an empty list
     lists = []
     for i in xrange(5):
-        lists.append(nodes.bullet_list("", nodes.Text('','')))
+        lists.append(nodes.bullet_list("", nodes.Text('', '')))
         lists[i].remove(lists[i][0])
         lists[i]['classes'].append('todo_list')
 
@@ -36,13 +37,13 @@ def process_todo_nodes(app, doctree, fromdocname):
 
         for todo_info in env.todo_all_todos:
             para = nodes.paragraph()
-            filename = env.doc2path(todo_info['docname'], base=None)
-
             # Create a reference
             newnode = nodes.reference('', '')
 
-            line_info = todo_info['lineno']
-            link = _('%(filename)s, line %(line_info)d') % locals()
+            filename = env.doc2path(todo_info['docname'], base=None)
+            link = (_('%(filename)s, line %(line_info)d') %
+                     {'filename': filename, 'line_info': todo_info['lineno']})
+
             innernode = nodes.emphasis(link, link)
             newnode['refdocname'] = todo_info['docname']
 
@@ -60,7 +61,8 @@ def process_todo_nodes(app, doctree, fromdocname):
 
             todo_entry = todo_info['todo']
 
-            env.resolve_references(todo_entry, todo_info['docname'], app.builder)
+            env.resolve_references(todo_entry, todo_info['docname'],
+                                   app.builder)
 
             item = nodes.list_item('', para)
             todo_entry[1]['classes'].append('details')
@@ -71,18 +73,20 @@ def process_todo_nodes(app, doctree, fromdocname):
             priority = 5
             if m:
                 priority = int(m.group(1))
-                if (priority < 0): priority = 1
-                if (priority > 5): priority = 5
+                if priority < 0:
+                    priority = 1
+                if priority > 5:
+                    priority = 5
 
             item['classes'].append('todo_p' + str(priority))
             todo_entry['classes'].append('todo_p' + str(priority))
 
             item.append(comment)
 
-            lists[priority-1].insert(0, item)
-
+            lists[priority - 1].insert(0, item)
 
         node.replace_self(lists)
+
 
 def setup(app):
     app.add_config_value('todo_include_todos', False, False)
@@ -98,4 +102,3 @@ def setup(app):
     app.connect('doctree-read', process_todos)
     app.connect('doctree-resolved', process_todo_nodes)
     app.connect('env-purge-doc', purge_todos)
-

@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright 2010-2011 OpenStack LLC.
+# Copyright 2010-2011 OpenStack Foundation
 # Copyright 2011 Piston Cloud Computing, Inc.
 # All Rights Reserved.
 #
@@ -17,6 +17,7 @@
 #    under the License.
 
 import datetime
+import uuid as stdlib_uuid
 
 from lxml import etree
 import webob
@@ -26,14 +27,12 @@ from nova.compute import vm_states
 from nova import console
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import timeutils
 from nova import test
 from nova.tests.api.openstack import fakes
-from nova import utils
+from nova.tests import matchers
 
 
-FLAGS = flags.FLAGS
 FAKE_UUID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
 
@@ -58,7 +57,7 @@ class FakeInstanceDB(object):
         if id is None:
             id = self.max_id + 1
         if uuid is None:
-            uuid = str(utils.gen_uuid())
+            uuid = str(stdlib_uuid.uuid4())
         instance = stub_instance(id, uuid=uuid)
         self.instances_by_id[id] = instance
         self.ids_by_uuid[uuid] = id
@@ -125,7 +124,7 @@ def stub_instance(id, user_id='fake', project_id='fake', host=None,
     return instance
 
 
-class ConsolesControllerTest(test.TestCase):
+class ConsolesControllerTest(test.NoDBTestCase):
     def setUp(self):
         super(ConsolesControllerTest, self).setUp()
         self.flags(verbose=True)
@@ -134,7 +133,7 @@ class ConsolesControllerTest(test.TestCase):
                        self.instance_db.return_server_by_id)
         self.stubs.Set(db, 'instance_get_by_uuid',
                        self.instance_db.return_server_by_uuid)
-        self.uuid = str(utils.gen_uuid())
+        self.uuid = str(stdlib_uuid.uuid4())
         self.url = '/v2/fake/servers/%s/consoles' % self.uuid
         self.controller = consoles.Controller()
 
@@ -145,7 +144,7 @@ class ConsolesControllerTest(test.TestCase):
         self.stubs.Set(console.api.API, 'create_console', fake_create_console)
 
         req = fakes.HTTPRequest.blank(self.url)
-        self.controller.create(req, self.uuid)
+        self.controller.create(req, self.uuid, None)
 
     def test_show_console(self):
         def fake_get_console(cons_self, context, instance_id, console_id):
@@ -167,7 +166,7 @@ class ConsolesControllerTest(test.TestCase):
 
         req = fakes.HTTPRequest.blank(self.url + '/20')
         res_dict = self.controller.show(req, self.uuid, '20')
-        self.assertDictMatch(res_dict, expected)
+        self.assertThat(res_dict, matchers.DictMatches(expected))
 
     def test_show_console_unknown_console(self):
         def fake_get_console(cons_self, context, instance_id, console_id):
@@ -211,7 +210,7 @@ class ConsolesControllerTest(test.TestCase):
 
         req = fakes.HTTPRequest.blank(self.url)
         res_dict = self.controller.index(req, self.uuid)
-        self.assertDictMatch(res_dict, expected)
+        self.assertThat(res_dict, matchers.DictMatches(expected))
 
     def test_delete_console(self):
         def fake_get_console(cons_self, context, instance_id, console_id):
@@ -253,7 +252,7 @@ class ConsolesControllerTest(test.TestCase):
                           req, self.uuid, '20')
 
 
-class TestConsolesXMLSerializer(test.TestCase):
+class TestConsolesXMLSerializer(test.NoDBTestCase):
     def test_show(self):
         fixture = {'console': {'id': 20,
                                'password': 'fake_password',

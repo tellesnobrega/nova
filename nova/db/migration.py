@@ -21,10 +21,9 @@
 from nova import utils
 
 
-IMPL = utils.LazyPluggable('db_backend',
+IMPL = utils.LazyPluggable('backend',
+                           config_group='database',
                            sqlalchemy='nova.db.sqlalchemy.migration')
-
-INIT_VERSION = 81
 
 
 def db_sync(version=None):
@@ -35,3 +34,8 @@ def db_sync(version=None):
 def db_version():
     """Display the current database version."""
     return IMPL.db_version()
+
+
+def db_initial_version():
+    """The starting version for the database."""
+    return IMPL.db_initial_version()

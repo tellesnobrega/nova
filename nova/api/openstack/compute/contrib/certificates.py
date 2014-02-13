@@ -1,6 +1,6 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
-# Copyright (c) 2012 OpenStack, LLC.
+# Copyright (c) 2012 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -12,7 +12,7 @@
 #    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
-#    under the License
+#    under the License.
 
 import webob.exc
 
@@ -20,13 +20,8 @@ from nova.api.openstack import extensions
 from nova.api.openstack import wsgi
 from nova.api.openstack import xmlutil
 import nova.cert.rpcapi
-from nova import flags
-from nova import network
-from nova.openstack.common import log as logging
+from nova.openstack.common.gettextutils import _
 
-
-LOG = logging.getLogger(__name__)
-FLAGS = flags.FLAGS
 authorize = extensions.extension_authorizer('compute', 'certificates')
 
 
@@ -43,15 +38,6 @@ class CertificateTemplate(xmlutil.TemplateBuilder):
         return xmlutil.MasterTemplate(root, 1)
 
 
-class CertificatesTemplate(xmlutil.TemplateBuilder):
-    def construct(self):
-        root = xmlutil.TemplateElement('certificates')
-        elem = xmlutil.SubTemplateElement(root, 'certificate',
-                                          selector='certificates')
-        make_certificate(elem)
-        return xmlutil.MasterTemplate(root, 1)
-
-
 def _translate_certificate_view(certificate, private_key=None):
     return {
         'data': certificate,
@@ -63,13 +49,12 @@ class CertificatesController(object):
     """The x509 Certificates API controller for the OpenStack API."""
 
     def __init__(self):
-        self.network_api = network.API()
         self.cert_rpcapi = nova.cert.rpcapi.CertAPI()
         super(CertificatesController, self).__init__()
 
     @wsgi.serializers(xml=CertificateTemplate)
     def show(self, req, id):
-        """Return a list of certificates."""
+        """Return certificate information."""
         context = req.environ['nova.context']
         authorize(context)
         if id != 'root':
@@ -81,7 +66,7 @@ class CertificatesController(object):
 
     @wsgi.serializers(xml=CertificateTemplate)
     def create(self, req, body=None):
-        """Return a list of certificates."""
+        """Create a certificate."""
         context = req.environ['nova.context']
         authorize(context)
         pk, cert = self.cert_rpcapi.generate_x509_cert(context,
@@ -91,7 +76,7 @@ class CertificatesController(object):
 
 
 class Certificates(extensions.ExtensionDescriptor):
-    """Certificates support"""
+    """Certificates support."""
 
     name = "Certificates"
     alias = "os-certificates"

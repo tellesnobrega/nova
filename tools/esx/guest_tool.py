@@ -1,7 +1,7 @@
 # vim: tabstop=4 shiftwidth=4 softtabstop=4
 
 # Copyright (c) 2011 Citrix Systems, Inc.
-# Copyright 2011 OpenStack LLC.
+# Copyright 2011 OpenStack Foundation
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -21,7 +21,6 @@ On Windows we require pyWin32 installed on Python.
 """
 
 import array
-import gettext
 import logging
 import os
 import platform
@@ -31,7 +30,8 @@ import subprocess
 import sys
 import time
 
-gettext.install('nova', unicode=1)
+from nova.openstack.common.gettextutils import _
+
 
 PLATFORM_WIN = 'win32'
 PLATFORM_LINUX = 'linux2'
@@ -350,7 +350,7 @@ def _set_ubuntu_networking(network_details=None):
             interface_file.write('\naddress %s\n' % ip_address)
         logging.debug(_("Successfully configured NIC %(device)d with "
                         "NIC info %(detail)s"), {'device': device,
-                                                 'detail': network_detail))
+                                                 'detail': network_detail})
     interface_file.close()
 
     if all_dns_servers:

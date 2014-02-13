@@ -1,6 +1,6 @@
 # vim: tabstop=5 shiftwidth=4 softtabstop=4
 
-# Copyright 2010-2011 OpenStack LLC.
+# Copyright 2010-2011 OpenStack Foundation
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -20,16 +20,12 @@ from xml.dom import minidom
 
 import webob
 
-import nova
+from nova.compute import api as compute_api
 from nova import db
 from nova import exception
-from nova import flags
 from nova.openstack.common import jsonutils
 from nova import test
 from nova.tests.api.openstack import fakes
-
-
-FLAGS = flags.FLAGS
 
 FAKE_UUID = fakes.FAKE_UUID
 
@@ -61,57 +57,54 @@ def return_instance_add_security_group(context, instance_id,
 
 
 class CreateserverextTest(test.TestCase):
+    def setUp(self):
+        super(CreateserverextTest, self).setUp()
+
+        self.security_group = None
+        self.injected_files = None
+        self.networks = None
+        self.user_data = None
+
+        def create(*args, **kwargs):
+            if 'security_group' in kwargs:
+                self.security_group = kwargs['security_group']
+            else:
+                self.security_group = None
+            if 'injected_files' in kwargs:
+                self.injected_files = kwargs['injected_files']
+            else:
+                self.injected_files = None
+
+            if 'requested_networks' in kwargs:
+                self.networks = kwargs['requested_networks']
+            else:
+                self.networks = None
+
+            if 'user_data' in kwargs:
+                self.user_data = kwargs['user_data']
+
+            resv_id = None
+
+            return ([{'id': '1234', 'display_name': 'fakeinstance',
+                     'uuid': FAKE_UUID,
+                     'user_id': 'fake',
+                     'project_id': 'fake',
+                     'created_at': "",
+                     'updated_at': "",
+                     'fixed_ips': [],
+                     'progress': 0}], resv_id)
+
+        self.stubs.Set(compute_api.API, 'create', create)
+        self.flags(
+            osapi_compute_extension=[
+                'nova.api.openstack.compute.contrib.select_extensions'],
+            osapi_compute_ext_list=['Createserverext', 'User_data',
+                'Security_groups', 'Os_networks'])
+
     def _make_stub_method(self, canned_return):
         def stub_method(*args, **kwargs):
             return canned_return
         return stub_method
-
-    def _setup_mock_compute_api(self):
-
-        class MockComputeAPI(nova.compute.API):
-
-            def __init__(self):
-                self.injected_files = None
-                self.networks = None
-                self.user_data = None
-                self.db = db
-
-            def create(self, *args, **kwargs):
-                if 'security_group' in kwargs:
-                    self.security_group = kwargs['security_group']
-                else:
-                    self.security_group = None
-                if 'injected_files' in kwargs:
-                    self.injected_files = kwargs['injected_files']
-                else:
-                    self.injected_files = None
-
-                if 'requested_networks' in kwargs:
-                    self.networks = kwargs['requested_networks']
-                else:
-                    self.networks = None
-
-                if 'user_data' in kwargs:
-                    self.user_data = kwargs['user_data']
-
-                resv_id = None
-
-                return ([{'id': '1234', 'display_name': 'fakeinstance',
-                         'uuid': FAKE_UUID,
-                         'user_id': 'fake',
-                         'project_id': 'fake',
-                         'created_at': "",
-                         'updated_at': "",
-                         'fixed_ips': [],
-                         'progress': 0}], resv_id)
-
-            def set_admin_password(self, *args, **kwargs):
-                pass
-
-        compute_api = MockComputeAPI()
-        self.stubs.Set(nova.compute, 'API',
-                       self._make_stub_method(compute_api))
-        return compute_api
 
     def _create_security_group_request_dict(self, security_groups):
         server = {}
@@ -151,11 +144,6 @@ class CreateserverextTest(test.TestCase):
         req.method = 'POST'
         req.body = jsonutils.dumps(body_dict)
         return req
-
-    def _run_create_instance_with_mock_compute_api(self, request):
-        compute_api = self._setup_mock_compute_api()
-        response = request.get_response(fakes.wsgi_app())
-        return compute_api, response
 
     def _format_xml_request_body(self, body_dict):
         server = body_dict['server']
@@ -200,196 +188,200 @@ class CreateserverextTest(test.TestCase):
     def _create_instance_with_networks_json(self, networks):
         body_dict = self._create_networks_request_dict(networks)
         request = self._get_create_request_json(body_dict)
-        _create_inst = self._run_create_instance_with_mock_compute_api
-        compute_api, response = _create_inst(request)
-        return request, response, compute_api.networks
+        response = request.get_response(fakes.wsgi_app(
+            init_only=('servers', 'os-create-server-ext')))
+        return request, response, self.networks
 
     def _create_instance_with_user_data_json(self, networks):
         body_dict = self._create_user_data_request_dict(networks)
         request = self._get_create_request_json(body_dict)
-        _create_inst = self._run_create_instance_with_mock_compute_api
-        compute_api, response = _create_inst(request)
-        return request, response, compute_api.user_data
+        response = request.get_response(fakes.wsgi_app(
+            init_only=('servers', 'os-create-server-ext')))
+        return request, response, self.user_data
 
     def _create_instance_with_networks_xml(self, networks):
         body_dict = self._create_networks_request_dict(networks)
         request = self._get_create_request_xml(body_dict)
-        _create_inst = self._run_create_instance_with_mock_compute_api
-        compute_api, response = _create_inst(request)
-        return request, response, compute_api.networks
+        response = request.get_response(fakes.wsgi_app(
+            init_only=('servers', 'os-create-server-ext')))
+        return request, response, self.networks
 
     def test_create_instance_with_no_networks(self):
         _create_inst = self._create_instance_with_networks_json
         request, response, networks = _create_inst(networks=None)
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(networks, None)
+        self.assertEqual(response.status_int, 202)
+        self.assertIsNone(networks)
 
     def test_create_instance_with_no_networks_xml(self):
         _create_inst = self._create_instance_with_networks_xml
         request, response, networks = _create_inst(networks=None)
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(networks, None)
+        self.assertEqual(response.status_int, 202)
+        self.assertIsNone(networks)
 
     def test_create_instance_with_one_network(self):
         _create_inst = self._create_instance_with_networks_json
         request, response, networks = _create_inst([FAKE_NETWORKS[0]])
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(networks, [FAKE_NETWORKS[0]])
+        self.assertEqual(response.status_int, 202)
+        self.assertEqual(networks, [FAKE_NETWORKS[0]])
 
     def test_create_instance_with_one_network_xml(self):
         _create_inst = self._create_instance_with_networks_xml
         request, response, networks = _create_inst([FAKE_NETWORKS[0]])
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(networks, [FAKE_NETWORKS[0]])
+        self.assertEqual(response.status_int, 202)
+        self.assertEqual(networks, [FAKE_NETWORKS[0]])
 
     def test_create_instance_with_two_networks(self):
         _create_inst = self._create_instance_with_networks_json
         request, response, networks = _create_inst(FAKE_NETWORKS)
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(networks, FAKE_NETWORKS)
+        self.assertEqual(response.status_int, 202)
+        self.assertEqual(networks, FAKE_NETWORKS)
 
     def test_create_instance_with_two_networks_xml(self):
         _create_inst = self._create_instance_with_networks_xml
         request, response, networks = _create_inst(FAKE_NETWORKS)
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(networks, FAKE_NETWORKS)
+        self.assertEqual(response.status_int, 202)
+        self.assertEqual(networks, FAKE_NETWORKS)
 
     def test_create_instance_with_duplicate_networks(self):
         _create_inst = self._create_instance_with_networks_json
         request, response, networks = _create_inst(DUPLICATE_NETWORKS)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(networks, None)
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(networks)
 
     def test_create_instance_with_duplicate_networks_xml(self):
         _create_inst = self._create_instance_with_networks_xml
         request, response, networks = _create_inst(DUPLICATE_NETWORKS)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(networks, None)
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(networks)
 
     def test_create_instance_with_network_no_id(self):
         body_dict = self._create_networks_request_dict([FAKE_NETWORKS[0]])
         del body_dict['server']['networks'][0]['uuid']
         request = self._get_create_request_json(body_dict)
-        _run_create_inst = self._run_create_instance_with_mock_compute_api
-        compute_api, response = _run_create_inst(request)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(compute_api.networks, None)
+        response = request.get_response(fakes.wsgi_app(
+            init_only=('servers', 'os-create-server-ext')))
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(self.networks)
 
     def test_create_instance_with_network_no_id_xml(self):
         body_dict = self._create_networks_request_dict([FAKE_NETWORKS[0]])
         request = self._get_create_request_xml(body_dict)
         uuid = ' uuid="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"'
         request.body = request.body.replace(uuid, '')
-        _run_create_inst = self._run_create_instance_with_mock_compute_api
-        compute_api, response = _run_create_inst(request)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(compute_api.networks, None)
+        response = request.get_response(fakes.wsgi_app(
+            init_only=('servers', 'os-create-server-ext')))
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(self.networks)
 
     def test_create_instance_with_network_invalid_id(self):
         _create_inst = self._create_instance_with_networks_json
         request, response, networks = _create_inst(INVALID_NETWORKS)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(networks, None)
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(networks)
 
     def test_create_instance_with_network_invalid_id_xml(self):
         _create_inst = self._create_instance_with_networks_xml
         request, response, networks = _create_inst(INVALID_NETWORKS)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(networks, None)
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(networks)
 
     def test_create_instance_with_network_empty_fixed_ip(self):
         networks = [('1', '')]
         _create_inst = self._create_instance_with_networks_json
         request, response, networks = _create_inst(networks)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(networks, None)
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(networks)
 
     def test_create_instance_with_network_non_string_fixed_ip(self):
         networks = [('1', 12345)]
         _create_inst = self._create_instance_with_networks_json
         request, response, networks = _create_inst(networks)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(networks, None)
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(networks)
 
     def test_create_instance_with_network_empty_fixed_ip_xml(self):
         networks = [('1', '')]
         _create_inst = self._create_instance_with_networks_xml
         request, response, networks = _create_inst(networks)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(networks, None)
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(networks)
 
     def test_create_instance_with_network_no_fixed_ip(self):
         body_dict = self._create_networks_request_dict([FAKE_NETWORKS[0]])
         del body_dict['server']['networks'][0]['fixed_ip']
         request = self._get_create_request_json(body_dict)
-        _run_create_inst = self._run_create_instance_with_mock_compute_api
-        compute_api, response = _run_create_inst(request)
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(compute_api.networks,
-                          [('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', None)])
+        response = request.get_response(fakes.wsgi_app(
+            init_only=('servers', 'os-create-server-ext')))
+        self.assertEqual(response.status_int, 202)
+        self.assertEqual(self.networks,
+                         [('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', None)])
 
     def test_create_instance_with_network_no_fixed_ip_xml(self):
         body_dict = self._create_networks_request_dict([FAKE_NETWORKS[0]])
         request = self._get_create_request_xml(body_dict)
         request.body = request.body.replace(' fixed_ip="10.0.1.12"', '')
-        _run_create_inst = self._run_create_instance_with_mock_compute_api
-        compute_api, response = _run_create_inst(request)
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(compute_api.networks,
-                          [('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', None)])
+        response = request.get_response(fakes.wsgi_app(
+            init_only=('servers', 'os-create-server-ext')))
+        self.assertEqual(response.status_int, 202)
+        self.assertEqual(self.networks,
+                         [('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', None)])
 
     def test_create_instance_with_userdata(self):
         user_data_contents = '#!/bin/bash\necho "Oh no!"\n'
         user_data_contents = base64.b64encode(user_data_contents)
         _create_inst = self._create_instance_with_user_data_json
         request, response, user_data = _create_inst(user_data_contents)
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(user_data, user_data_contents)
+        self.assertEqual(response.status_int, 202)
+        self.assertEqual(user_data, user_data_contents)
 
     def test_create_instance_with_userdata_none(self):
         user_data_contents = None
         _create_inst = self._create_instance_with_user_data_json
         request, response, user_data = _create_inst(user_data_contents)
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(user_data, user_data_contents)
+        self.assertEqual(response.status_int, 202)
+        self.assertEqual(user_data, user_data_contents)
 
     def test_create_instance_with_userdata_with_non_b64_content(self):
         user_data_contents = '#!/bin/bash\necho "Oh no!"\n'
         _create_inst = self._create_instance_with_user_data_json
         request, response, user_data = _create_inst(user_data_contents)
-        self.assertEquals(response.status_int, 400)
-        self.assertEquals(user_data, None)
+        self.assertEqual(response.status_int, 400)
+        self.assertIsNone(user_data)
 
     def test_create_instance_with_security_group_json(self):
         security_groups = ['test', 'test1']
-        self.stubs.Set(nova.db, 'security_group_get_by_name',
+        self.stubs.Set(db, 'security_group_get_by_name',
                        return_security_group_get_by_name)
-        self.stubs.Set(nova.db, 'instance_add_security_group',
+        self.stubs.Set(db, 'instance_add_security_group',
                        return_instance_add_security_group)
         body_dict = self._create_security_group_request_dict(security_groups)
         request = self._get_create_request_json(body_dict)
-        _run_create_inst = self._run_create_instance_with_mock_compute_api
-        compute_api, response = _run_create_inst(request)
-        self.assertEquals(response.status_int, 202)
-        self.assertEquals(compute_api.security_group, security_groups)
+        response = request.get_response(fakes.wsgi_app(
+            init_only=('servers', 'os-create-server-ext')))
+        self.assertEqual(response.status_int, 202)
+        self.assertEqual(self.security_group, security_groups)
 
     def test_get_server_by_id_verify_security_groups_json(self):
-        self.stubs.Set(nova.db, 'instance_get', fakes.fake_instance_get())
+        self.stubs.Set(db, 'instance_get', fakes.fake_instance_get())
+        self.stubs.Set(db, 'instance_get_by_uuid', fakes.fake_instance_get())
         req = webob.Request.blank('/v2/fake/os-create-server-ext/1')
         req.headers['Content-Type'] = 'application/json'
-        response = req.get_response(fakes.wsgi_app())
-        self.assertEquals(response.status_int, 200)
+        response = req.get_response(fakes.wsgi_app(
+            init_only=('os-create-server-ext', 'servers')))
+        self.assertEqual(response.status_int, 200)
         res_dict = jsonutils.loads(response.body)
         expected_security_group = [{"name": "test"}]
-        self.assertEquals(res_dict['server'].get('security_groups'),
-                          expected_security_group)
+        self.assertEqual(res_dict['server'].get('security_groups'),
+                         expected_security_group)
 
     def test_get_server_by_id_verify_security_groups_xml(self):
-        self.stubs.Set(nova.db, 'instance_get', fakes.fake_instance_get())
+        self.stubs.Set(db, 'instance_get', fakes.fake_instance_get())
+        self.stubs.Set(db, 'instance_get_by_uuid', fakes.fake_instance_get())
         req = webob.Request.blank('/v2/fake/os-create-server-ext/1')
         req.headers['Accept'] = 'application/xml'
-        response = req.get_response(fakes.wsgi_app())
-        self.assertEquals(response.status_int, 200)
+        response = req.get_response(fakes.wsgi_app(
+            init_only=('os-create-server-ext', 'servers')))
+        self.assertEqual(response.status_int, 200)
         dom = minidom.parseString(response.body)
         server = dom.childNodes[0]
         sec_groups = server.getElementsByTagName('security_groups')[0]

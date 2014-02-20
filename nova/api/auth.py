@@ -115,9 +115,6 @@ class NovaKeystoneContext(wsgi.Middleware):
         project_name = req.headers.get('X_TENANT_NAME')
         user_name = req.headers.get('X_USER_NAME')
        
-        print req.headers.get('X_TENANT_NAME')
-        print req.headers.get('X_PROJECT_HIERARCHY')
-        print req.headers.get('X_TENANT_HIERARCHY')
         # Get the auth token
         auth_token = req.headers.get('X_AUTH_TOKEN',
                                      req.headers.get('X_STORAGE_TOKEN'))
@@ -135,6 +132,10 @@ class NovaKeystoneContext(wsgi.Middleware):
             except ValueError:
                 raise webob.exc.HTTPInternalServerError(
                           _('Invalid service catalog json.'))
+        
+        print ">>>>>>>>>>>>>>>><<<<<<<<<<<<<>>>>>>>>>>><<<<<<<<<<<<<<<<"
+        print req.headers['X_PARENT_TENANT_ID']
+        print req.headers
 
         ctx = context.RequestContext(user_id,
                                      project_id,

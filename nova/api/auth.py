@@ -132,11 +132,10 @@ class NovaKeystoneContext(wsgi.Middleware):
             except ValueError:
                 raise webob.exc.HTTPInternalServerError(
                           _('Invalid service catalog json.'))
-        
-        print ">>>>>>>>>>>>>>>><<<<<<<<<<<<<>>>>>>>>>>><<<<<<<<<<<<<<<<"
-        print req.headers['X_PARENT_TENANT_ID']
+        print '<<<<<<<<<<<<<<<>>>>>>>>>>>>>>'
         print req.headers
-
+        print '<<<<<<<<<<<<<<<>>>>>>>>>>>>>>'
+        
         ctx = context.RequestContext(user_id,
                                      project_id,
                                      user_name=user_name,

@@ -108,7 +108,8 @@ class NovaKeystoneContext(wsgi.Middleware):
 
         if 'X_TENANT_ID' in req.headers:
             # This is the new header since Keystone went to ID/Name
-            if 'X_PROJECT_HIERARCHY' in req.headers:
+            if 'X_PROJECT_HIERARCHY' in req.headers and 
+                'X_PROJECT_HIERARCHY' is not None:
                 # This is duo to the new field that contains the project
                 # hierarchy
                 project_id = req.headers['X_PROJECT_HIERARCHY']

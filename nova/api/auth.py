@@ -113,9 +113,6 @@ class NovaKeystoneContext(wsgi.Middleware):
                     # This is duo to the new field that contains the project
                     # hierarchy
                     project_id = req.headers['X_PROJECT_HIERARCHY']
-                    print "<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>"
-                    print project_id
-                    print "<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>"
                 else:
                     project_id = req.headers['X_TENANT_ID']
             else:

@@ -108,7 +108,12 @@ class NovaKeystoneContext(wsgi.Middleware):
 
         if 'X_TENANT_ID' in req.headers:
             # This is the new header since Keystone went to ID/Name
-            project_id = req.headers['X_TENANT_ID']
+            if 'X_PROJECT_HIERARCHY' in req.headers:
+                # This is duo to the new field that contains the project
+                # hierarchy
+                project_id = req.headers['X_PROJECT_HIERARCHY']
+            else:
+                project_id = req.headers['X_TENANT_ID']
         else:
             # This is for legacy compatibility
             project_id = req.headers['X_TENANT']
@@ -132,9 +137,6 @@ class NovaKeystoneContext(wsgi.Middleware):
             except ValueError:
                 raise webob.exc.HTTPInternalServerError(
                           _('Invalid service catalog json.'))
-        print '<<<<<<<<<<<<<<<>>>>>>>>>>>>>>'
-        print vars(req.headers)
-        print '<<<<<<<<<<<<<<<>>>>>>>>>>>>>>'
         
         ctx = context.RequestContext(user_id,
                                      project_id,

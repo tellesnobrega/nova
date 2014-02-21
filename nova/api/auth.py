@@ -133,7 +133,7 @@ class NovaKeystoneContext(wsgi.Middleware):
                 raise webob.exc.HTTPInternalServerError(
                           _('Invalid service catalog json.'))
         print '<<<<<<<<<<<<<<<>>>>>>>>>>>>>>'
-        print req.headers
+        print vars(req.headers)
         print '<<<<<<<<<<<<<<<>>>>>>>>>>>>>>'
         
         ctx = context.RequestContext(user_id,

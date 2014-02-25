@@ -143,7 +143,7 @@ class RequestContext(object):
         return cls(**values)
 
     def elevated(self, read_deleted=None, overwrite=False):
-        """Return a version of this context with admin flag set."""
+        """Return  a version of this context with admin flag set."""
         context = copy.copy(self)
         context.is_admin = True
 

@@ -98,6 +98,7 @@ class ApiSampleTestBase(integrated_helpers._IntegratedTestBase):
 
     def _read_template(self, name):
         template = self._get_template(name)
+        print name
         with open(template) as inf:
             return inf.read().strip()
 
@@ -115,6 +116,7 @@ class ApiSampleTestBase(integrated_helpers._IntegratedTestBase):
             if not isinstance(result, dict):
                 raise NoMatch(_('%(result_str)s: %(result)s is not a dict.')
                         % {'result_str': result_str, 'result': result})
+            
             ex_keys = sorted(expected.keys())
             res_keys = sorted(result.keys())
             if ex_keys != res_keys:
@@ -143,6 +145,13 @@ class ApiSampleTestBase(integrated_helpers._IntegratedTestBase):
                         {'result_str': result_str, 'result': result})
 
             expected = expected[:]
+            if len(result) == 80:
+                print "<<<<<<<<<<<<<Expected>>>>>>>>>>>>>"
+                print expected
+                print "<<<<<<<<<<<<<Expected>>>>>>>>>>>>>"
+                print "<<<<<<<<<<<<<Result>>>>>>>>>>>>>"
+                print result
+                print "<<<<<<<<<<<<<Result>>>>>>>>>>>>>"
             extra = []
             for res_obj in result:
                 for i, ex_obj in enumerate(expected):

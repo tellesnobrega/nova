@@ -231,7 +231,8 @@
   <extension alias="os-assisted-volume-snapshots" updated="%(timestamp)s" namespace="http://docs.openstack.org/compute/ext/assisted-volume-snapshots/api/v2" name="AssistedVolumeSnapshots">
     <description>%(text)s</description>
   </extension>
-  <extension alias="os-baremetal-ext-status" updated="%(timestamp)s" namespace="http://docs.openstack.org/compute/ext/baremetal_ext_status/api/v2" name="BareMetalExtStatus">    <description>%(text)s</description>
+  <extension alias="os-baremetal-ext-status" updated="%(timestamp)s" namespace="http://docs.openstack.org/compute/ext/baremetal_ext_status/api/v2" name="BareMetalExtStatus">
+     <description>%(text)s</description>
   </extension>
   <extension alias="os-preserve-ephemeral-rebuild" updated="%(timestamp)s" namespace="http://docs.openstack.org/compute/ext/preserve_ephemeral_rebuild/api/v2" name="PreserveEphemeralOnRebuild">
     <description>%(text)s</description>
@@ -239,4 +240,8 @@
   <extension alias="os-extended-services-delete" updated="%(timestamp)s" namespace="http://docs.openstack.org/compute/ext/extended_services_delete/api/v2" name="ExtendedServicesDelete">
     <description>%(text)s</description>
   </extension>
+   <extension alias="os-change-instance-ownership" updated="%(timestamp)s" namespace="http://docs.openstack.org/compute/ext/change-instance-ownership/api/v2" name="ChangeInstanceOwnership">
+    <description>%(text)s</description>
+  </extension>
+
 </extensions>

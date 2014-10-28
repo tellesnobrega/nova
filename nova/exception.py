@@ -881,6 +881,11 @@ class QuotaExists(NovaException):
                 "resource %(resource)s")
 
 
+class DomainQuotaExists(NovaException):
+    msg_fmt = _("Quota exists for domain %(domain_id)s, "
+                "resource %(resource)s")
+
+
 class QuotaResourceUnknown(QuotaNotFound):
     msg_fmt = _("Unknown quota resources %(unknown)s.")
 
@@ -894,12 +899,20 @@ class ProjectQuotaNotFound(QuotaNotFound):
     msg_fmt = _("Quota for project %(project_id)s could not be found.")
 
 
+class DomainQuotaNotFound(QuotaNotFound):
+    msg_fmt = _("Quota for domain %(domain_in)s could not be found.")
+
+
 class QuotaClassNotFound(QuotaNotFound):
     msg_fmt = _("Quota class %(class_name)s could not be found.")
 
 
 class QuotaUsageNotFound(QuotaNotFound):
     msg_fmt = _("Quota usage for project %(project_id)s could not be found.")
+
+
+class DomainQuotaUsageNotFound(QuotaNotFound):
+    msg_fmt = _("Quota usage for domain %(domain_id)s could not be found.")
 
 
 class ReservationNotFound(QuotaNotFound):

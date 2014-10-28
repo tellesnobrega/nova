@@ -47,10 +47,12 @@ class QuotaIntegrationTestCase(test.TestCase):
         # Apparently needed by the RPC tests...
         self.network = self.start_service('network')
 
+        self.domain_id = 'admin'
         self.user_id = 'admin'
         self.project_id = 'admin'
         self.context = context.RequestContext(self.user_id,
                                               self.project_id,
+                                              self.domain_id,
                                               is_admin=True)
 
         nova.tests.image.fake.stub_out_image_service(self.stubs)
@@ -233,6 +235,7 @@ class FakeContext(object):
         self.is_admin = False
         self.user_id = 'fake_user'
         self.project_id = project_id
+        self.domain_id = 'fake_domain'
         self.quota_class = quota_class
         self.read_deleted = 'no'
 
@@ -552,7 +555,8 @@ class QuotaEngineTestCase(test.TestCase):
         self.assertEqual(result, 42)
 
     def _make_quota_obj(self, driver):
-        quota_obj = quota.QuotaEngine(quota_driver_class=driver)
+        quota_obj = quota.QuotaEngine(quota_driver_class=driver,
+                                      domain_driver_class=driver)
         resources = [
             quota.AbsoluteResource('test_resource4'),
             quota.AbsoluteResource('test_resource3'),
@@ -713,13 +717,13 @@ class QuotaEngineTestCase(test.TestCase):
                         test_resource4=4,
                         ), None, 'fake_project', None),
                 ])
-        self.assertEqual(result1, [
+        self.assertEqual(result1['project'], [
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
-        self.assertEqual(result2, [
+        self.assertEqual(result2['project'], [
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
-        self.assertEqual(result3, [
+        self.assertEqual(result3['project'], [
                 'resv-01', 'resv-02', 'resv-03', 'resv-04',
                 ])
 
@@ -727,7 +731,9 @@ class QuotaEngineTestCase(test.TestCase):
         context = FakeContext(None, None)
         driver = FakeDriver()
         quota_obj = self._make_quota_obj(driver)
-        quota_obj.commit(context, ['resv-01', 'resv-02', 'resv-03'])
+        quota_obj.commit(context,
+                         {'domain': ['resv-01', 'resv-02', 'resv-03'],
+                          'project': ['resv-01', 'resv-02', 'resv-03']})
 
         self.assertEqual(driver.called, [
                 ('commit', context, ['resv-01', 'resv-02', 'resv-03'], None,
@@ -738,7 +744,9 @@ class QuotaEngineTestCase(test.TestCase):
         context = FakeContext(None, None)
         driver = FakeDriver()
         quota_obj = self._make_quota_obj(driver)
-        quota_obj.rollback(context, ['resv-01', 'resv-02', 'resv-03'])
+        quota_obj.rollback(context,
+                           {'domain': ['resv-01', 'resv-02', 'resv-03'],
+                            'project': ['resv-01', 'resv-02', 'resv-03']})
 
         self.assertEqual(driver.called, [
                 ('rollback', context, ['resv-01', 'resv-02', 'resv-03'], None,
@@ -793,6 +801,201 @@ class QuotaEngineTestCase(test.TestCase):
         self.assertEqual(quota_obj.resources,
                          ['test_resource1', 'test_resource2',
                           'test_resource3', 'test_resource4'])
+
+
+class DomainQuotaDriverTestCase(test.TestCase):
+
+    def setUp(self):
+        super(DomainQuotaDriverTestCase, self).setUp()
+
+        self.flags(quota_instances=10,
+                   quota_cores=20,
+                   quota_ram=50 * 1024,
+                   quota_floating_ips=10,
+                   quota_fixed_ips=10,
+                   quota_metadata_items=128,
+                   quota_injected_files=5,
+                   quota_injected_file_content_bytes=10 * 1024,
+                   quota_injected_file_path_bytes=255,
+                   quota_security_groups=10,
+                   quota_security_group_rules=20,
+                   reservation_expire=86400,
+                   until_refresh=0,
+                   max_age=0,
+                   )
+
+        self.driver = quota.DbQuotaDriver()
+        self.driverDomain = quota.DomainQuotaDriver()
+        self.calls = []
+
+        self.useFixture(test.TimeOverride())
+
+    def test_get_defaults(self):
+        # Use our pre-defined resources
+        self._stub_quota_class_get_default()
+        result = self.driverDomain.get_defaults(None, quota.QUOTAS._resources)
+
+        self.assertEqual(result, dict(
+                instances=10,
+                cores=20,
+                ram=50 * 1024,
+                floating_ips=10,
+                fixed_ips=10,
+                metadata_items=128,
+                injected_files=5,
+                injected_file_content_bytes=10 * 1024,
+                injected_file_path_bytes=255,
+                security_groups=10,
+                security_group_rules=20,
+                key_pairs=100,
+                ))
+
+    def _stub_quota_class_get_default(self):
+        # Stub out quota_class_get_default
+        def fake_qcgd(context):
+            self.calls.append('quota_class_get_default')
+            return dict(
+                instances=-1,
+                ram=10,
+                metadata_items=-1,
+                injected_file_content_bytes=-1,
+                )
+        self.stubs.Set(db, 'quota_class_get_default', fake_qcgd)
+
+    def _stub_get_domain_quotas(self):
+        def fake_get_domain_quotas(context, resources, domain_id,
+                                    quota_class=None, defaults=True,
+                                    usages=True, remains=False):
+            self.calls.append('get_domain_quotas')
+            return dict((k, dict(limit=v.default))
+                        for k, v in resources.items())
+
+        self.stubs.Set(self.driverDomain, 'get_domain_quotas',
+                       fake_get_domain_quotas)
+
+    def test_limit_check(self):
+        self._stub_get_domain_quotas()
+        self.driverDomain.limit_check
+
+    def _stub_get_project_quotas(self):
+        def fake_get_project_quotas(context, resources, project_id,
+                                    quota_class=None, defaults=True,
+                                    usages=True, remains=False):
+            self.calls.append('get_domain_quotas')
+            return dict((k, dict(limit=v.default))
+                        for k, v in resources.items())
+
+        self.stubs.Set(self.driverDomain, 'get_domain_quotas',
+                       fake_get_domain_quotas)
+
+    def test_limit_check(self):
+        self._stub_get_domain_quotas()
+        self.driverDomain.limit_check
+        (FakeContext('test_project', 'test_class'),
+                                quota.QUOTAS._resources,
+                                dict(key_pairs=10))
+
+    def test_limit_check_under(self):
+        self._stub_get_domain_quotas()
+        self.assertRaises(exception.InvalidQuotaValue,
+                          self.driverDomain.limit_check,
+                          FakeContext('test_project', 'test_class'),
+                          quota.QUOTAS._resources,
+                          dict(metadata_items=-1))
+
+    def test_limit_check_over(self):
+        self._stub_get_domain_quotas()
+        self.assertRaises(exception.OverQuota,
+                          self.driverDomain.limit_check,
+                          FakeContext('test_project', 'test_class'),
+                          quota.QUOTAS._resources,
+                          dict(key_pairs=101))
+
+    def test_limit_check_unlimited(self):
+        self.flags(quota_metadata_items=-1)
+        self._stub_get_domain_quotas()
+        self.driverDomain.limit_check(
+                FakeContext('test_project', 'test_class'),
+                                quota.QUOTAS._resources,
+                                dict(metadata_items=32767))
+
+    def _stub_domain_quota_reserve(self):
+        def fake_domain_quota_reserve(context, resources, domain_quotas,
+                                      deltas, expire, until_refresh, max_age,
+                                      project_list, domain_id=None):
+            self.calls.append(('domain_quota_reserve', expire, until_refresh,
+                               max_age))
+            return ['dresv-1', 'dresv-2', 'dresv-3']
+        self.stubs.Set(db, 'domain_quota_reserve', fake_domain_quota_reserve)
+
+    def test_reserve_bad_expire(self):
+        self._stub_get_domain_quotas()
+        self._stub_domain_quota_reserve()
+        self.assertRaises(exception.InvalidReservationExpiration,
+                          self.driverDomain.reserve,
+                          FakeContext('test_project', 'test_class'),
+                          quota.QUOTAS._resources,
+                          dict(instances=2), expire='invalid')
+        self.assertEqual(self.calls, [])
+
+    def test_reserve_default_expire(self):
+        self._stub_get_domain_quotas()
+        self._stub_domain_quota_reserve()
+        result = self.driverDomain.reserve(FakeContext('test_project',
+                                                       'test_class'),
+                                           quota.QUOTAS._resources,
+                                           dict(instances=2))
+
+        expire = timeutils.utcnow() + datetime.timedelta(seconds=86400)
+
+        self.assertEqual(self.calls, [
+                'get_domain_quotas',
+                ('domain_quota_reserve', expire, 0, 0),
+                ])
+        self.assertEqual(result, ['dresv-1', 'dresv-2', 'dresv-3'])
+
+    def test_reserve_int_expire(self):
+        self._stub_get_domain_quotas()
+        self._stub_domain_quota_reserve()
+        result = self.driverDomain.reserve(FakeContext('test_project',
+                                                       'test_class'),
+                                           quota.QUOTAS._resources,
+                                           dict(instances=2), expire=3600)
+
+        expire = timeutils.utcnow() + datetime.timedelta(seconds=3600)
+        self.assertEqual(self.calls, [
+                'get_domain_quotas',
+                ('domain_quota_reserve', expire, 0, 0),
+                ])
+        self.assertEqual(result, ['dresv-1', 'dresv-2', 'dresv-3'])
+
+    def test_reserve_timedelta_expire(self):
+        self._stub_get_domain_quotas()
+        self._stub_domain_quota_reserve()
+        expire_delta = datetime.timedelta(seconds=60)
+        result = self.driverDomain.reserve(FakeContext('test_project',
+                                                       'test_class'),
+                                           quota.QUOTAS._resources,
+                                           dict(instances=2),
+                                           expire=expire_delta)
+
+        expire = timeutils.utcnow() + expire_delta
+        self.assertEqual(self.calls, [
+                'get_domain_quotas',
+                ('domain_quota_reserve', expire, 0, 0),
+                ])
+        self.assertEqual(result, ['dresv-1', 'dresv-2', 'dresv-3'])
+
+    def test_reserve_datetime_expire(self):
+        self._stub_get_domain_quotas()
+        self._stub_domain_quota_reserve()
+        expire = timeutils.utcnow() + datetime.timedelta(seconds=120)
+        result = self.driverDomain.reserve(FakeContext('test_project',
+                                                       'test_class'),
+                                           quota.QUOTAS._resources,
+                                           dict(instances=2),
+                                           expire=expire)
+
 
 
 class DbQuotaDriverTestCase(test.TestCase):

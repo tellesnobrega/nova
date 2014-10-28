@@ -1045,9 +1045,20 @@ def quota_create(context, project_id, resource, limit, user_id=None):
                              user_id=user_id)
 
 
+def domain_quota_create(context, domain_id, resource, limit, user_id=None):
+    """Create a quota for the given domain and resource."""
+    return IMPL.domain_quota_create(context, domain_id, resource,
+                                     limit, user_id=None)
+
+
 def quota_get(context, project_id, resource, user_id=None):
     """Retrieve a quota or raise if it does not exist."""
     return IMPL.quota_get(context, project_id, resource, user_id=user_id)
+
+
+def domain_quota_get(context, domain_id, resource, user_id=None):
+    """Retrieve a domain quota or raise if it does not exist."""
+    return IMPL.domain_quota_get(context, domain_id, resource, user_id=user_id)
 
 
 def quota_get_all_by_project_and_user(context, project_id, user_id):
@@ -1060,9 +1071,19 @@ def quota_get_all_by_project(context, project_id):
     return IMPL.quota_get_all_by_project(context, project_id)
 
 
+def quota_get_all_by_domain(context, domain_id):
+    """Retrieve all quotas associated with a given domain."""
+    return IMPL.quota_get_all_by_domain(context, domain_id)
+
+
 def quota_get_all(context, project_id):
     """Retrieve all user quotas associated with a given project."""
     return IMPL.quota_get_all(context, project_id)
+
+
+def domain_quota_get_all(context, domain_id):
+    """Retrieve all user quotas associated with a given domain."""
+    return IMPL.domain_quota_get_all(context, domain_id)
 
 
 def quota_update(context, project_id, resource, limit, user_id=None):
@@ -1089,6 +1110,11 @@ def quota_class_get_default(context):
     return IMPL.quota_class_get_default(context)
 
 
+def quota_domain_get_default(context):
+    """Retrieve all default domain quotas."""
+    return IMPL.quota_domain_get_default(context)
+
+
 def quota_class_get_all_by_name(context, class_name):
     """Retrieve all quotas associated with a given quota class."""
     return IMPL.quota_class_get_all_by_name(context, class_name)
@@ -1107,10 +1133,26 @@ def quota_usage_get(context, project_id, resource, user_id=None):
     return IMPL.quota_usage_get(context, project_id, resource, user_id=user_id)
 
 
+def domain_quota_usage_get(context, domain_id, resource, user_id=None):
+    """Retrieve a domain quota usage or raise if it does not exist."""
+    return IMPL.domain_quota_usage_get(context, domain_id, resource,
+                                       user_id=None)
+
+
 def quota_usage_get_all_by_project_and_user(context, project_id, user_id):
     """Retrieve all usage associated with a given resource."""
     return IMPL.quota_usage_get_all_by_project_and_user(context,
                                                         project_id, user_id)
+
+
+def domain_quota_usage_get_all(context, domain_id):
+    """Retrieve all usage associated with a given resource."""
+    return IMPL.domain_quota_usage_get_all(context, domain_id)
+
+
+def quota_usage_get_all_by_domain(context, domain_id):
+    """Retrieve all usage associated with a given resource."""
+    return IMPL.quota_usage_get_all_by_domain(context, domain_id)
 
 
 def quota_usage_get_all_by_project(context, project_id):
@@ -1124,7 +1166,40 @@ def quota_usage_update(context, project_id, user_id, resource, **kwargs):
                                    **kwargs)
 
 
+def domain_quota_usage_update(context, domain_id, resource, **kwargs):
+    """Update a domain quota usage or raise if it does not exist."""
+    return IMPL.domain_quota_usage_update(context, domain_id, resource,
+                                           **kwargs)
+
+
 ###################
+
+
+def reservation_create(context, uuid, usage, project_id, user_id, resource,
+                       delta, expire):
+    """Create a reservation for the given project and resource."""
+    return IMPL.reservation_create(context, uuid, usage, project_id,
+                                   user_id, resource, delta, expire)
+
+
+def domain_reservation_create(context, uuid, usage, domain_id, resource,
+                       delta, expire):
+    """Create a domain reservation for the given project and resource."""
+    return IMPL.domain_reservation_create(context, uuid, usage,
+                                          domain_id, resource, delta, expire)
+
+
+def reservation_get(context, uuid):
+    """Retrieve a reservation or raise if it does not exist."""
+    return IMPL.reservation_get(context, uuid)
+
+
+def domain_reservation_get(context, uuid):
+    """Retrieve a domain reservation or raise if it does not exist."""
+    return IMPL.domain_reservation_get(context, uuid)
+
+
+#####################
 
 
 def quota_reserve(context, resources, quotas, user_quotas, deltas, expire,
@@ -1135,6 +1210,15 @@ def quota_reserve(context, resources, quotas, user_quotas, deltas, expire,
                               project_id=project_id, user_id=user_id)
 
 
+def domain_quota_reserve(context, resources, domain_quotas, deltas,
+                         expire, until_refresh, max_age, project_list,
+                         domain_id):
+    """Check domain quotas and create appropriate reservations."""
+    return IMPL.domain_quota_reserve(context, resources, domain_quotas, deltas,
+                                     expire, until_refresh, max_age,
+                                     project_list, domain_id=domain_id)
+
+
 def reservation_commit(context, reservations, project_id=None, user_id=None):
     """Commit quota reservations."""
     return IMPL.reservation_commit(context, reservations,
@@ -1142,11 +1226,23 @@ def reservation_commit(context, reservations, project_id=None, user_id=None):
                                    user_id=user_id)
 
 
+def domain_reservation_commit(context, reservations, domain_id):
+    """Commit domain quota reservations."""
+    return IMPL.domain_reservation_commit(context, reservations,
+                                            domain_id=domain_id)
+
+
 def reservation_rollback(context, reservations, project_id=None, user_id=None):
     """Roll back quota reservations."""
     return IMPL.reservation_rollback(context, reservations,
                                      project_id=project_id,
                                      user_id=user_id)
+
+
+def domain_reservation_rollback(context, reservations, domain_id):
+    """Roll back domain quota reservations."""
+    return IMPL.domain_reservation_rollback(context, reservations,
+                                            domain_id=domain_id)
 
 
 def quota_destroy_all_by_project_and_user(context, project_id, user_id):
@@ -1163,6 +1259,11 @@ def quota_destroy_all_by_project(context, project_id):
 def reservation_expire(context):
     """Roll back any expired reservations."""
     return IMPL.reservation_expire(context)
+
+
+def domain_reservation_expire(context):
+    """Roll back any expired reservations."""
+    return IMPL.domain_reservation_expire(context)
 
 
 ###################

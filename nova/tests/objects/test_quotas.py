@@ -53,7 +53,7 @@ class _TestQuotasObject(object):
                 project_id='fake_proj2', user_id='fake_user2')
 
     def test_from_reservations(self):
-        fake_reservations = ['1', '2']
+        fake_reservations = {'project': ['1', '2']}
         quotas = quotas_obj.Quotas.from_reservations(
                 self.context, fake_reservations)
         self.assertEqual(self.context, quotas._context)
@@ -68,7 +68,7 @@ class _TestQuotasObject(object):
                           self.context, fake_reservations)
 
     def test_from_reservations_instance(self):
-        fake_reservations = ['1', '2']
+        fake_reservations = {'project': ['1', '2']}
         quotas = quotas_obj.Quotas.from_reservations(
                 self.context, fake_reservations,
                 instance=self.instance)
@@ -78,7 +78,7 @@ class _TestQuotasObject(object):
         self.assertEqual('fake_user2', quotas.user_id)
 
     def test_from_reservations_instance_admin(self):
-        fake_reservations = ['1', '2']
+        fake_reservations = {'project': ['1', '2']}
         elevated = self.context.elevated()
         quotas = quotas_obj.Quotas.from_reservations(
                 elevated, fake_reservations,
@@ -89,7 +89,7 @@ class _TestQuotasObject(object):
         self.assertEqual('fake_user2', quotas.user_id)
 
     def test_reserve(self):
-        fake_reservations = ['1', '2']
+        fake_reservations = {'project': ['1', '2']}
         quotas = quotas_obj.Quotas()
 
         self.mox.StubOutWithMock(QUOTAS, 'reserve')
@@ -107,7 +107,7 @@ class _TestQuotasObject(object):
         self.assertEqual('user_id', quotas.user_id)
 
     def test_commit(self):
-        fake_reservations = ['1', '2']
+        fake_reservations = {'project': ['1', '2']}
         quotas = quotas_obj.Quotas.from_reservations(
                 self.context, fake_reservations)
 
@@ -126,7 +126,7 @@ class _TestQuotasObject(object):
         quotas.commit()
 
     def test_rollback(self):
-        fake_reservations = ['1', '2']
+        fake_reservations = {'project': ['1', '2']}
         quotas = quotas_obj.Quotas.from_reservations(
                 self.context, fake_reservations)
 

@@ -226,8 +226,10 @@ class BaseTestCase(test.TestCase):
 
         self.user_id = 'fake'
         self.project_id = 'fake'
+        self.domain_id = 'fake'
         self.context = context.RequestContext(self.user_id,
-                                              self.project_id)
+                                              self.project_id,
+                                              self.domain_id)
         self.none_quotas = objects.Quotas.from_reservations(
                 self.context, None)
 
@@ -4197,7 +4199,7 @@ class ComputeTestCase(BaseTestCase):
 
     def _ensure_quota_reservations_committed(self, instance):
         """Mock up commit of quota reservations."""
-        reservations = list('fake_res')
+        reservations = {'project': list('fake_res')}
         self.mox.StubOutWithMock(nova.quota.QUOTAS, 'commit')
         nova.quota.QUOTAS.commit(mox.IgnoreArg(), reservations,
                                  project_id=instance['project_id'],
@@ -4207,7 +4209,7 @@ class ComputeTestCase(BaseTestCase):
 
     def _ensure_quota_reservations_rolledback(self, instance):
         """Mock up rollback of quota reservations."""
-        reservations = list('fake_res')
+        reservations = {'project': list('fake_res')}
         self.mox.StubOutWithMock(nova.quota.QUOTAS, 'rollback')
         nova.quota.QUOTAS.rollback(mox.IgnoreArg(), reservations,
                                    project_id=instance['project_id'],

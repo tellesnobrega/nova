@@ -884,6 +884,75 @@ class TestNovaMigrations(BaseWalkMigrationTestCase, CommonTestsMixIn):
                                     ['host']]))
 
 
+    # migration 266 - make user quotas key and value
+    def _check_266(self, engine, data):
+        domain_quota_usages = db_utils.get_table(engine, 'domain_quota_usages')
+        domain_reservations = db_utils.get_table(engine, 'domain_reservations')
+        domain_quotas = db_utils.get_table(engine, 'domain_quotas')
+
+        fake_domain_quota_usages = {'id': 5,
+                                    'resource': 'instances',
+                                    'in_use': 1,
+                                    'reserved': 1}
+        fake_domain_reservations = {'id': 6,
+                                    'uuid': 'fake_domain_reservationo_uuid',
+                                    'usage_id': 5,
+                                    'resource': 'instances',
+                                    'delta': 1,
+                                    'expire': timeutils.utcnow()}
+        domain_quota_usages.insert().execute(fake_domain_quota_usages)
+        domain_reservations.insert().execute(fake_domain_reservations)
+
+        fake_quotas = {'id': 4,
+                       'domain_id': 'fake_domain',
+                       'resource': 'instances',
+                       'hard_limit': 10}
+
+        domain_quotas.insert().execute(fake_quotas)
+        domain_quota_usages = db_utils.get_table(engine, 'domain_quota_usages')
+        domain_reservations = db_utils.get_table(engine, 'domain_reservations')
+        # Get the record
+        domain_quota = domain_quotas.select().execute().first()
+        domain_quota_usage = domain_quota_usages.select().execute().first()
+        domain_reservation = domain_reservations.select().execute().first()
+
+        self.assertEqual(domain_quota['id'], 4)
+        self.assertEqual(domain_quota['domain_id'], 'fake_domain')
+        self.assertEqual(domain_quota['resource'], 'instances')
+        self.assertEqual(domain_quota['hard_limit'], 10)
+        # Check indexes exist
+        if engine.name == 'mysql' or engine.name == 'postgresql':
+            data = {
+                # table_name: ((idx_1, (c1, c2,)), (idx2, (c1, c2,)), ...)
+                'domain_quota_usages': (
+                    ('ix_domain_quota_usages_domain_id',
+                     sorted(('domain_id', 'deleted'))),
+                ),
+                'domain_reservations': (
+                    ('ix_domain_reservations_id',
+                     sorted(('domain_id', 'deleted'))),
+                )
+            }
+
+            meta = sqlalchemy.MetaData()
+            meta.bind = engine
+
+            for table_name, indexes in data.iteritems():
+                table = sqlalchemy.Table(table_name, meta, autoload=True)
+                current_indexes = [(i.name, tuple(i.columns.keys()))
+                                   for i in table.indexes]
+
+                # we can not get correct order of columns in index
+                # definition to postgresql using sqlalchemy. So we sort
+                # columns list before compare
+                # bug http://www.sqlalchemy.org/trac/ticket/2767
+                current_indexes = (
+                    [(idx[0], sorted(idx[1])) for idx in current_indexes]
+                )
+                for index in indexes:
+                    self.assertIn(index, current_indexes)
+
+
 class ProjectTestCase(test.NoDBTestCase):
 
     def test_all_migrations_have_downgrade(self):

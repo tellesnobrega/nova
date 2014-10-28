@@ -226,8 +226,10 @@ class BaseTestCase(test.TestCase):
 
         self.user_id = 'fake'
         self.project_id = 'fake'
+        self.domain_id = 'fake'
         self.context = context.RequestContext(self.user_id,
-                                              self.project_id)
+                                              self.project_id,
+                                              self.domain_id)
         self.none_quotas = objects.Quotas.from_reservations(
                 self.context, None)
 
@@ -1817,7 +1819,7 @@ class ComputeTestCase(BaseTestCase):
         # check failed to schedule --> terminate
         params = {'vm_state': vm_states.ERROR}
         instance = self._create_fake_instance_obj(params=params)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
         self.assertRaises(exception.InstanceNotFound, db.instance_get_by_uuid,
                           self.context, instance['uuid'])
         # Double check it's not there for admins, either.
@@ -1835,7 +1837,7 @@ class ComputeTestCase(BaseTestCase):
         LOG.info("Running instances: %s", instances)
         self.assertEqual(len(instances), 1)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
         instances = db.instance_get_all(self.context)
         LOG.info("After terminating instances: %s", instances)
@@ -1905,7 +1907,7 @@ class ComputeTestCase(BaseTestCase):
                                        '/dev/vdc')
 
         self.compute.terminate_instance(self.context,
-                instance, bdms, [])
+                instance, bdms, {})
 
         instances = db.instance_get_all(self.context)
         LOG.info("After terminating instances: %s", instances)
@@ -1925,7 +1927,7 @@ class ComputeTestCase(BaseTestCase):
         self._assert_state({'vm_state': vm_states.ACTIVE,
                             'task_state': None})
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
         instances = db.instance_get_all(self.context)
         self.assertEqual(len(instances), 0)
 
@@ -1941,7 +1943,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertEqual(len(instances), 1)
         self.mox.ReplayAll()
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
         instances = db.instance_get_all(self.context)
         LOG.info("After terminating instances: %s", instances)
@@ -1960,7 +1962,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertTrue(instance['launched_at'].replace(tzinfo=None) > launch)
         self.assertIsNone(instance['deleted_at'])
         terminate = timeutils.utcnow()
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
         with utils.temporary_mutation(self.context, read_deleted='only'):
             instance = db.instance_get_by_uuid(self.context,
@@ -1987,7 +1989,7 @@ class ComputeTestCase(BaseTestCase):
                 _fake_deallocate_network)
 
         try:
-            self.compute.terminate_instance(self.context, instance, [], [])
+            self.compute.terminate_instance(self.context, instance, [], {})
         except test.TestingException:
             pass
 
@@ -2007,7 +2009,7 @@ class ComputeTestCase(BaseTestCase):
                                                 inst_uuid,
                                                 expected_attrs=extra)
         self.compute.stop_instance(self.context, instance=inst_obj)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_start(self):
         # Ensure instance can be started.
@@ -2025,7 +2027,7 @@ class ComputeTestCase(BaseTestCase):
         inst_obj.task_state = task_states.POWERING_ON
         inst_obj.save(self.context)
         self.compute.start_instance(self.context, instance=inst_obj)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_stop_start_no_image(self):
         params = {'image_ref': ''}
@@ -2043,7 +2045,7 @@ class ComputeTestCase(BaseTestCase):
         inst_obj.task_state = task_states.POWERING_ON
         inst_obj.save(self.context)
         self.compute.start_instance(self.context, instance=inst_obj)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_rescue(self):
         # Ensure instance can be rescued and unrescued.
@@ -2076,7 +2078,7 @@ class ComputeTestCase(BaseTestCase):
         self.compute.unrescue_instance(self.context, instance)
         self.assertTrue(called['unrescued'])
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_rescue_notifications(self):
         # Ensure notifications on instance rescue.
@@ -2117,7 +2119,7 @@ class ComputeTestCase(BaseTestCase):
         msg = fake_notifier.NOTIFICATIONS[0]
         self.assertIn('rescue_image_name', msg.payload)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_unrescue_notifications(self):
         # Ensure notifications on instance rescue.
@@ -2155,7 +2157,7 @@ class ComputeTestCase(BaseTestCase):
             image_ref_url = glance.generate_image_url(FAKE_IMAGE_REF)
             self.assertEqual(payload['image_ref_url'], image_ref_url)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_rescue_handle_err(self):
         # If the driver fails to rescue, instance state should remain the same
@@ -2208,7 +2210,7 @@ class ComputeTestCase(BaseTestCase):
                                                    image_ref, instance)
         mock_rescue.assert_called_with(ctxt, instance, [],
                                        rescue_image_meta, 'password')
-        self.compute.terminate_instance(ctxt, instance, [], [])
+        self.compute.terminate_instance(ctxt, instance, [], {})
 
     @mock.patch.object(nova.compute.utils, "get_image_metadata")
     @mock.patch.object(nova.virt.fake.FakeDriver, "rescue")
@@ -2236,7 +2238,7 @@ class ComputeTestCase(BaseTestCase):
                                                    image_ref, instance)
         mock_rescue.assert_called_with(ctxt, instance, [],
                                        rescue_image_meta, 'password')
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_power_on(self):
         # Ensure instance can be powered on.
@@ -2261,7 +2263,7 @@ class ComputeTestCase(BaseTestCase):
         inst_obj.save(self.context)
         self.compute.start_instance(self.context, instance=inst_obj)
         self.assertTrue(called['power_on'])
-        self.compute.terminate_instance(self.context, inst_obj, [], [])
+        self.compute.terminate_instance(self.context, inst_obj, [], {})
 
     def test_power_off(self):
         # Ensure instance can be powered off.
@@ -2286,7 +2288,7 @@ class ComputeTestCase(BaseTestCase):
         inst_obj.save(self.context)
         self.compute.stop_instance(self.context, instance=inst_obj)
         self.assertTrue(called['power_off'])
-        self.compute.terminate_instance(self.context, inst_obj, [], [])
+        self.compute.terminate_instance(self.context, inst_obj, [], {})
 
     def test_pause(self):
         # Ensure instance can be paused and unpaused.
@@ -2316,7 +2318,7 @@ class ComputeTestCase(BaseTestCase):
         msg = fake_notifier.NOTIFICATIONS[1]
         self.assertEqual(msg.event_type,
                          'compute.instance.unpause.end')
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_suspend(self):
         # ensure instance can be suspended and resumed.
@@ -2329,7 +2331,7 @@ class ComputeTestCase(BaseTestCase):
         instance.task_state = task_states.RESUMING
         instance.save()
         self.compute.resume_instance(self.context, instance)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_suspend_error(self):
         # Ensure vm_state is ERROR when suspend error occurs.
@@ -2382,7 +2384,7 @@ class ComputeTestCase(BaseTestCase):
         self.compute.resume_instance(self.context, instance)
         self.assertEqual(instance.vm_state, vm_states.RESCUED)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_resume_no_old_state(self):
         # ensure a suspended instance with no old_vm_state is resumed to the
@@ -2398,7 +2400,7 @@ class ComputeTestCase(BaseTestCase):
         self.compute.resume_instance(self.context, instance)
         self.assertEqual(instance.vm_state, vm_states.ACTIVE)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_rebuild(self):
         # Ensure instance can be rebuilt.
@@ -2417,7 +2419,7 @@ class ComputeTestCase(BaseTestCase):
                                       orig_sys_metadata=sys_metadata,
                                       bdms=[], recreate=False,
                                       on_shared_storage=False)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_rebuild_driver(self):
         # Make sure virt drivers can override default rebuild
@@ -2449,7 +2451,7 @@ class ComputeTestCase(BaseTestCase):
                                       bdms=[], recreate=False,
                                       on_shared_storage=False)
         self.assertTrue(called['rebuild'])
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_rebuild_no_image(self):
         # Ensure instance can be rebuilt when started with no image.
@@ -2466,7 +2468,7 @@ class ComputeTestCase(BaseTestCase):
                                       new_pass="new_password",
                                       orig_sys_metadata=sys_metadata, bdms=[],
                                       recreate=False, on_shared_storage=False)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_rebuild_launched_at_time(self):
         # Ensure instance can be rebuilt.
@@ -2491,7 +2493,7 @@ class ComputeTestCase(BaseTestCase):
         instance.refresh()
         self.assertEqual(cur_time,
                          instance['launched_at'].replace(tzinfo=None))
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_rebuild_with_injected_files(self):
         # Ensure instance can be rebuilt with injected files.
@@ -2521,7 +2523,7 @@ class ComputeTestCase(BaseTestCase):
                                       orig_sys_metadata=sys_metadata,
                                       bdms=[], recreate=False,
                                       on_shared_storage=False)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def _test_reboot(self, soft,
                      test_delete=False, test_unrescue=False,
@@ -2894,7 +2896,7 @@ class ComputeTestCase(BaseTestCase):
         self.compute.inject_network_info(self.context, instance=instance)
         self.assertTrue(called['inject'])
         self.compute.terminate_instance(self.context,
-                                        instance, [], [])
+                                        instance, [], {})
 
     def test_reset_network(self):
         # Ensure we can reset networking on an instance.
@@ -2914,7 +2916,7 @@ class ComputeTestCase(BaseTestCase):
 
         self.assertEqual(called['count'], 1)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def _get_snapshotting_instance(self):
         # Ensure instance can be snapshotted.
@@ -3082,7 +3084,7 @@ class ComputeTestCase(BaseTestCase):
         output = self.compute.get_console_output(self.context,
                 instance=instance, tail_length=None)
         self.assertEqual(output, 'FAKE CONSOLE OUTPUT\nANOTHER\nLAST LINE')
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_console_output_tail(self):
         # Make sure we can get console output from instance.
@@ -3094,7 +3096,7 @@ class ComputeTestCase(BaseTestCase):
         output = self.compute.get_console_output(self.context,
                 instance=instance, tail_length=2)
         self.assertEqual(output, 'ANOTHER\nLAST LINE')
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_console_output_not_implemented(self):
         def fake_not_implemented(*args, **kwargs):
@@ -3118,7 +3120,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.get_console_output, self.context,
                           instance, 0)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_console_output_instance_not_found(self):
         def fake_not_found(*args, **kwargs):
@@ -3142,7 +3144,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.get_console_output, self.context,
                           instance, 0)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_novnc_vnc_console(self):
         # Make sure we can a vnc console for an instance.
@@ -3159,7 +3161,7 @@ class ComputeTestCase(BaseTestCase):
                                                instance=instance)
         self.assertTrue(console)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_validate_console_port_vnc(self):
         self.flags(vnc_enabled=True)
@@ -3233,7 +3235,7 @@ class ComputeTestCase(BaseTestCase):
         console = self.compute.get_vnc_console(self.context, 'xvpvnc',
                                                instance=instance)
         self.assertTrue(console)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_invalid_vnc_console_type(self):
         # Raise useful error if console type is an unrecognised string.
@@ -3255,7 +3257,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.get_vnc_console,
                           self.context, 'invalid', instance=instance)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_missing_vnc_console_type(self):
         # Raise useful error is console type is None.
@@ -3277,7 +3279,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.get_vnc_console,
                           self.context, None, instance=instance)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_get_vnc_console_not_implemented(self):
         self.stubs.Set(self.compute.driver, 'get_vnc_console',
@@ -3298,7 +3300,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.get_vnc_console,
                           self.context, 'novnc', instance=instance)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_spicehtml5_spice_console(self):
         # Make sure we can a spice console for an instance.
@@ -3315,7 +3317,7 @@ class ComputeTestCase(BaseTestCase):
                                                instance=instance)
         self.assertTrue(console)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_invalid_spice_console_type(self):
         # Raise useful error if console type is an unrecognised string
@@ -3337,7 +3339,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.get_spice_console,
                           self.context, 'invalid', instance=instance)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_missing_spice_console_type(self):
         # Raise useful error is console type is None
@@ -3359,7 +3361,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.get_spice_console,
                           self.context, None, instance=instance)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_rdphtml5_rdp_console(self):
         # Make sure we can a rdp console for an instance.
@@ -3376,7 +3378,7 @@ class ComputeTestCase(BaseTestCase):
                                                instance=instance)
         self.assertTrue(console)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_invalid_rdp_console_type(self):
         # Raise useful error if console type is an unrecognised string
@@ -3398,7 +3400,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.get_rdp_console,
                           self.context, 'invalid', instance=instance)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_missing_rdp_console_type(self):
         # Raise useful error is console type is None
@@ -3420,7 +3422,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.get_rdp_console,
                           self.context, None, instance=instance)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_vnc_console_instance_not_ready(self):
         self.flags(vnc_enabled=True)
@@ -3536,7 +3538,7 @@ class ComputeTestCase(BaseTestCase):
         diagnostics = self.compute.get_diagnostics(self.context,
                 instance=instance)
         self.assertEqual(diagnostics, expected_diagnostic)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_instance_diagnostics(self):
         # Make sure we can get diagnostics for an instance.
@@ -3570,7 +3572,7 @@ class ComputeTestCase(BaseTestCase):
                     'uptime': 46664,
                     'version': '1.0'}
         self.assertEqual(expected, diagnostics)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_add_fixed_ip_usage_notification(self):
         def dummy(*args, **kwargs):
@@ -3590,7 +3592,7 @@ class ComputeTestCase(BaseTestCase):
                                               instance=instance)
 
         self.assertEqual(len(fake_notifier.NOTIFICATIONS), 2)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_remove_fixed_ip_usage_notification(self):
         def dummy(*args, **kwargs):
@@ -3610,7 +3612,7 @@ class ComputeTestCase(BaseTestCase):
                                                    instance=instance)
 
         self.assertEqual(len(fake_notifier.NOTIFICATIONS), 2)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_run_instance_usage_notification(self, request_spec=None):
         # Ensure run instance generates appropriate usage notification.
@@ -3646,7 +3648,7 @@ class ComputeTestCase(BaseTestCase):
         image_ref_url = glance.generate_image_url(FAKE_IMAGE_REF)
         self.assertEqual(payload['image_ref_url'], image_ref_url)
         self.assertEqual('Success', payload['message'])
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_run_instance_image_usage_notification(self):
         request_spec = {'image': {'name': 'fake_name', 'key': 'value'}}
@@ -3742,7 +3744,7 @@ class ComputeTestCase(BaseTestCase):
                 None, True, None, False)
         fake_notifier.NOTIFICATIONS = []
         timeutils.set_time_override(cur_time)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
         self.assertEqual(len(fake_notifier.NOTIFICATIONS), 4)
 
@@ -3783,7 +3785,7 @@ class ComputeTestCase(BaseTestCase):
                           self.compute.run_instance,
                           self.context, instance, {}, {}, [], None, None, True,
                           None, False)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_run_instance_queries_macs(self):
         # run_instance should ask the driver for node mac addresses and pass
@@ -3884,7 +3886,7 @@ class ComputeTestCase(BaseTestCase):
         instance.refresh()
         self.assertEqual(vm_states.ERROR, instance.vm_state)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_delete_instance_keeps_net_on_power_off_fail(self):
         self.mox.StubOutWithMock(self.compute.driver, 'destroy')
@@ -3977,7 +3979,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertRaises(exception.InstanceTerminationFailure,
                           self.compute.terminate_instance,
                           self.context,
-                          instance, [], [])
+                          instance, [], {})
         instance = db.instance_get_by_uuid(self.context, instance['uuid'])
         self.assertEqual(instance['vm_state'], vm_states.ERROR)
 
@@ -3997,7 +3999,7 @@ class ComputeTestCase(BaseTestCase):
                           self.context, instance, {}, {}, None, None, None,
                           True, None, False)
 
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_lock(self):
         # FIXME(comstud): This test is such crap.  This is testing
@@ -4042,7 +4044,7 @@ class ComputeTestCase(BaseTestCase):
         instance.save()
         self.compute_api.reboot(self.context, instance, 'SOFT')
         check_task_state(task_states.REBOOTING)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def _check_locked_by(self, instance_uuid, locked_by):
         instance = db.instance_get_by_uuid(self.context, instance_uuid)
@@ -4150,10 +4152,10 @@ class ComputeTestCase(BaseTestCase):
             ("start_instance", task_states.POWERING_ON),
             ("terminate_instance", task_states.DELETING,
                                      {'bdms': [],
-                                     'reservations': []},
+                                     'reservations': {}},
                                      vm_states.ERROR),
             ("soft_delete_instance", task_states.SOFT_DELETING,
-                                     {'reservations': []}),
+                                     {'reservations': {}}),
             ("restore_instance", task_states.RESTORING),
             ("rebuild_instance", task_states.REBUILDING,
                                  {'orig_image_ref': None,
@@ -4171,18 +4173,18 @@ class ComputeTestCase(BaseTestCase):
             ("unrescue_instance", task_states.UNRESCUING),
             ("revert_resize", task_states.RESIZE_REVERTING,
                               {'migration': migration,
-                               'reservations': []}),
+                               'reservations': {}}),
             ("prep_resize", task_states.RESIZE_PREP,
                             {'image': {},
                              'instance_type': {},
-                             'reservations': [],
+                             'reservations': {},
                              'request_spec': {},
                              'filter_properties': {},
                              'node': None}),
             ("resize_instance", task_states.RESIZE_PREP,
                                 {'migration': migration,
                                  'image': {},
-                                 'reservations': [],
+                                 'reservations': {},
                                  'instance_type': {}}),
             ("pause_instance", task_states.PAUSING),
             ("unpause_instance", task_states.UNPAUSING),
@@ -4197,7 +4199,7 @@ class ComputeTestCase(BaseTestCase):
 
     def _ensure_quota_reservations_committed(self, instance):
         """Mock up commit of quota reservations."""
-        reservations = list('fake_res')
+        reservations = {'project': list('fake_res')}
         self.mox.StubOutWithMock(nova.quota.QUOTAS, 'commit')
         nova.quota.QUOTAS.commit(mox.IgnoreArg(), reservations,
                                  project_id=instance['project_id'],
@@ -4207,7 +4209,7 @@ class ComputeTestCase(BaseTestCase):
 
     def _ensure_quota_reservations_rolledback(self, instance):
         """Mock up rollback of quota reservations."""
-        reservations = list('fake_res')
+        reservations = {'project': list('fake_res')}
         self.mox.StubOutWithMock(nova.quota.QUOTAS, 'rollback')
         nova.quota.QUOTAS.rollback(mox.IgnoreArg(), reservations,
                                    project_id=instance['project_id'],
@@ -4294,7 +4296,7 @@ class ComputeTestCase(BaseTestCase):
         instance.save()
         self.compute.prep_resize(self.context, instance=instance,
                                  instance_type=instance_type,
-                                 image={}, reservations=[], request_spec={},
+                                 image={}, reservations={}, request_spec={},
                                  filter_properties={}, node=None)
         instance.task_state = task_states.RESIZE_MIGRATED
         instance.save()
@@ -4491,7 +4493,7 @@ class ComputeTestCase(BaseTestCase):
         instance.save()
         self.compute.prep_resize(self.context, instance=instance,
                                  instance_type=instance_type,
-                                 image={}, reservations=[], request_spec={},
+                                 image={}, reservations={}, request_spec={},
                                  filter_properties={}, node=None)
 
         # fake out detach for prep_resize (and later terminate)
@@ -4506,7 +4508,7 @@ class ComputeTestCase(BaseTestCase):
                 self.context.elevated(),
                 instance.uuid, 'pre-migrating')
         self.compute.resize_instance(self.context, instance=instance,
-                migration=migration, image={}, reservations=[],
+                migration=migration, image={}, reservations={},
                 instance_type=jsonutils.to_primitive(instance_type))
 
         # assert bdm is unchanged
@@ -4562,7 +4564,7 @@ class ComputeTestCase(BaseTestCase):
         self.stubs.Set(cinder.API, "detach", fake_detach)
 
         # clean up
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_finish_resize_handles_error(self):
         # Make sure we don't leave the instance in RESIZE on error.
@@ -4694,7 +4696,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertIn('launched_at', payload)
         self.assertEqual(payload['launched_at'], timeutils.strtime(cur_time))
         self.assertEqual(payload['image_ref_url'], new_image_ref_url)
-        self.compute.terminate_instance(self.context, inst_ref, [], [])
+        self.compute.terminate_instance(self.context, inst_ref, [], {})
 
     def test_finish_resize_instance_notification(self):
         # Ensure notifications on instance migrate/resize.
@@ -4715,7 +4717,7 @@ class ComputeTestCase(BaseTestCase):
         instance.save()
 
         self.compute.prep_resize(self.context, instance=instance,
-                instance_type=new_type, image={}, reservations=[],
+                instance_type=new_type, image={}, reservations={},
                 request_spec={}, filter_properties={}, node=None)
 
         self._stub_out_resize_network_methods()
@@ -4725,12 +4727,12 @@ class ComputeTestCase(BaseTestCase):
                 instance.uuid, 'pre-migrating')
         self.compute.resize_instance(self.context, instance=instance,
                 migration=migration, image={}, instance_type=new_type,
-                reservations=[])
+                reservations={})
         timeutils.set_time_override(cur_time)
         fake_notifier.NOTIFICATIONS = []
 
         self.compute.finish_resize(self.context,
-                migration=migration, reservations=[],
+                migration=migration, reservations={},
                 disk_info={}, image={}, instance=instance)
 
         self.assertEqual(len(fake_notifier.NOTIFICATIONS), 2)
@@ -4754,7 +4756,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertEqual(payload['launched_at'], timeutils.strtime(cur_time))
         image_ref_url = glance.generate_image_url(FAKE_IMAGE_REF)
         self.assertEqual(payload['image_ref_url'], image_ref_url)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_resize_instance_notification(self):
         # Ensure notifications on instance migrate/resize.
@@ -4774,7 +4776,7 @@ class ComputeTestCase(BaseTestCase):
 
         instance_type = flavors.get_default_flavor()
         self.compute.prep_resize(self.context, instance=instance,
-                instance_type=instance_type, image={}, reservations=[],
+                instance_type=instance_type, image={}, reservations={},
                 request_spec={}, filter_properties={}, node=None)
         db.migration_get_by_instance_and_status(self.context.elevated(),
                                                 instance.uuid,
@@ -4805,7 +4807,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertIn('launched_at', payload)
         image_ref_url = glance.generate_image_url(FAKE_IMAGE_REF)
         self.assertEqual(payload['image_ref_url'], image_ref_url)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_prep_resize_instance_migration_error_on_same_host(self):
         """Ensure prep_resize raise a migration error if destination is set on
@@ -4829,7 +4831,7 @@ class ComputeTestCase(BaseTestCase):
                           instance_type=instance_type, image={},
                           reservations=reservations, request_spec={},
                           filter_properties={}, node=None)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_prep_resize_instance_migration_error_on_none_host(self):
         """Ensure prep_resize raises a migration error if destination host is
@@ -4851,7 +4853,7 @@ class ComputeTestCase(BaseTestCase):
                           instance_type=instance_type, image={},
                           reservations=reservations, request_spec={},
                           filter_properties={}, node=None)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_resize_instance_driver_error(self):
         # Ensure instance status set to Error on resize error.
@@ -4892,7 +4894,7 @@ class ComputeTestCase(BaseTestCase):
         # is not updated.  Refresh and compare against the DB.
         instance.refresh()
         self.assertEqual(instance.vm_state, vm_states.ERROR)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_resize_instance_driver_rollback(self):
         # Ensure instance status set to Running after rollback.
@@ -4932,7 +4934,7 @@ class ComputeTestCase(BaseTestCase):
         instance.refresh()
         self.assertEqual(instance.vm_state, vm_states.ACTIVE)
         self.assertIsNone(instance.task_state)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def _test_resize_instance(self, clean_shutdown=True):
         # Ensure instance can be migrated/resized.
@@ -4945,7 +4947,7 @@ class ComputeTestCase(BaseTestCase):
         instance.host = 'foo'
         instance.save()
         self.compute.prep_resize(self.context, instance=instance,
-                instance_type=instance_type, image={}, reservations=[],
+                instance_type=instance_type, image={}, reservations={},
                 request_spec={}, filter_properties={}, node=None)
 
         # verify 'old_vm_state' was set on system_metadata
@@ -4974,7 +4976,7 @@ class ComputeTestCase(BaseTestCase):
         ) as (mock_get_by_inst_uuid, mock_get_instance_vol_bdinfo,
                 mock_terminate_vol_conn, mock_get_power_off_values):
             self.compute.resize_instance(self.context, instance=instance,
-                    migration=migration, image={}, reservations=[],
+                    migration=migration, image={}, reservations={},
                     instance_type=jsonutils.to_primitive(instance_type),
                     clean_shutdown=clean_shutdown)
             mock_get_instance_vol_bdinfo.assert_called_once_with(
@@ -4984,7 +4986,7 @@ class ComputeTestCase(BaseTestCase):
             mock_get_power_off_values.assert_caleld_once_with(self.context,
                     instance, clean_shutdown)
             self.assertEqual(migration.dest_compute, instance.host)
-            self.compute.terminate_instance(self.context, instance, [], [])
+            self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_resize_instance(self):
         self._test_resize_instance()
@@ -5058,10 +5060,10 @@ class ComputeTestCase(BaseTestCase):
         self.compute.resize_instance(self.context, instance=instance,
                                      migration=migration,
                                      image={},
-                                     reservations=[],
+                                     reservations={},
                                      instance_type=new_instance_type_p)
         self.compute.finish_resize(self.context,
-                    migration=migration, reservations=[],
+                    migration=migration, reservations={},
                     disk_info={}, image={}, instance=instance)
 
         # Prove that the instance size is now the new size
@@ -5085,7 +5087,7 @@ class ComputeTestCase(BaseTestCase):
         self.assertEqual(old_vm_state, instance.vm_state)
         self.assertIsNone(instance.task_state)
         self.assertEqual(p_state, instance.power_state)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_confirm_resize_from_active(self):
         self._test_confirm_resize(power_on=True)
@@ -5164,10 +5166,10 @@ class ComputeTestCase(BaseTestCase):
         self.compute.resize_instance(self.context, instance=instance,
                                      migration=migration,
                                      image={},
-                                     reservations=[],
+                                     reservations={},
                                      instance_type=new_instance_type_p)
         self.compute.finish_resize(self.context,
-                    migration=migration, reservations=[],
+                    migration=migration, reservations={},
                     disk_info={}, image={}, instance=instance)
 
         # Prove that the instance size is now the new size
@@ -5286,7 +5288,7 @@ class ComputeTestCase(BaseTestCase):
                 instance_type=instance_type, image={},
                 reservations=reservations, request_spec={},
                 filter_properties={}, node=None)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_resize_instance_handles_migration_error(self):
         # Ensure vm_state is ERROR when error occurs.
@@ -5325,7 +5327,7 @@ class ComputeTestCase(BaseTestCase):
         # is not updated.  Refresh and compare against the DB.
         instance.refresh()
         self.assertEqual(instance.vm_state, vm_states.ERROR)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_pre_live_migration_instance_has_no_fixed_ip(self):
         # Confirm that no exception is raised if there is no fixed ip on
@@ -6853,7 +6855,7 @@ class ComputeTestCase(BaseTestCase):
         mock_get_by_id.side_effect = exception.MigrationNotFound(
                 migration_id=0)
         self.compute.confirm_resize(self.context, instance=instance,
-                                    migration=migration, reservations=[])
+                                    migration=migration, reservations={})
         self.assertTrue(mock_rollback.called)
 
     @mock.patch.object(instance_obj.Instance, 'get_by_uuid')
@@ -6870,7 +6872,7 @@ class ComputeTestCase(BaseTestCase):
         mock_get_by_id.side_effect = exception.InstanceNotFound(
                 instance_id=instance.uuid)
         self.compute.confirm_resize(self.context, instance=instance,
-                                    migration=migration, reservations=[])
+                                    migration=migration, reservations={})
         self.assertTrue(mock_rollback.called)
 
     @mock.patch.object(objects.Migration, 'get_by_id')
@@ -6886,7 +6888,7 @@ class ComputeTestCase(BaseTestCase):
 
         mock_get_by_id.return_value = migration
         self.compute.confirm_resize(self.context, instance=instance,
-                                    migration=migration, reservations=[])
+                                    migration=migration, reservations={})
         self.assertTrue(mock_rollback.called)
 
     @mock.patch.object(objects.Migration, 'get_by_id')
@@ -6902,7 +6904,7 @@ class ComputeTestCase(BaseTestCase):
 
         mock_get_by_id.return_value = migration
         self.compute.confirm_resize(self.context, instance=instance,
-                                    migration=migration, reservations=[])
+                                    migration=migration, reservations={})
         self.assertTrue(mock_rollback.called)
 
     def test_allow_confirm_resize_on_instance_in_deleting_task_state(self):
@@ -6945,7 +6947,7 @@ class ComputeTestCase(BaseTestCase):
         instance.save()
 
         self.compute.confirm_resize(self.context, instance=instance,
-                                    migration=migration, reservations=[])
+                                    migration=migration, reservations={})
         instance.refresh()
         self.assertEqual(vm_states.ACTIVE, instance['vm_state'])
 
@@ -7774,7 +7776,7 @@ class ComputeAPITestCase(BaseTestCase):
                           volume_backed_inst_1)
 
         self.compute.terminate_instance(self.context, volume_backed_inst_1,
-                                        [], [])
+                                        [], {})
 
     @mock.patch.object(objects.BlockDeviceMappingList,
                        'get_by_instance_uuid')
@@ -7801,7 +7803,7 @@ class ComputeAPITestCase(BaseTestCase):
                           volume_backed_inst_2)
 
         self.compute.terminate_instance(self.context, volume_backed_inst_2,
-                                        [], [])
+                                        [], {})
 
     def test_get(self):
         # Test get instance.
@@ -8443,7 +8445,7 @@ class ComputeAPITestCase(BaseTestCase):
                 self.context, instance['uuid']):
             db.block_device_mapping_destroy(self.context, bdm['id'])
         instance.refresh()
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def _test_check_and_transform_bdm(self, bdms, expected_bdms,
                                       image_bdms=None, base_options=None,
@@ -9301,7 +9303,7 @@ class ComputeAPITestCase(BaseTestCase):
         # Kill the instance and check that it was detached
         bdms = db.block_device_mapping_get_all_by_instance(admin,
                 instance['uuid'])
-        self.compute.terminate_instance(admin, instance, bdms, [])
+        self.compute.terminate_instance(admin, instance, bdms, {})
 
         self.assertTrue(result["detached"])
 
@@ -9333,7 +9335,7 @@ class ComputeAPITestCase(BaseTestCase):
         self.compute.run_instance(self.context, instance, {}, {}, None, None,
                 None, True, None, False)
 
-        self.compute.terminate_instance(self.context, instance, bdms, [])
+        self.compute.terminate_instance(self.context, instance, bdms, {})
 
         bdms = db.block_device_mapping_get_all_by_instance(admin,
                                                            instance['uuid'])
@@ -10839,7 +10841,7 @@ class ComputeRescheduleResizeOrReraiseTestCase(BaseTestCase):
         self.compute.prep_resize(self.context, image=None,
                                  instance=inst_obj,
                                  instance_type=self.instance_type,
-                                 reservations=[], request_spec={},
+                                 reservations={}, request_spec={},
                                  filter_properties={}, node=None)
 
     def test_reschedule_fails_with_exception(self):

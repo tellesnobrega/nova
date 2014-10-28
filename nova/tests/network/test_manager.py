@@ -846,8 +846,10 @@ class VlanNetworkTestCase(test.TestCase):
         self.network = network_manager.VlanManager(host=HOST)
         self.network.db = db
         self.context = context.RequestContext('testuser', 'testproject',
+                                              'testdomain',
                                               is_admin=False)
         self.context_admin = context.RequestContext('testuser', 'testproject',
+                                                    'test_domain',
                                                 is_admin=True)
 
     def test_quota_driver_type(self):

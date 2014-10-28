@@ -1216,7 +1216,7 @@ class _BaseTaskTestCase(object):
 
         self.conductor_manager.compute_rpcapi.prep_resize(
             self.context, 'image', mox.IsA(objects.Instance),
-            mox.IsA(dict), 'host1', [], request_spec=request_spec,
+            mox.IsA(dict), 'host1', {}, request_spec=request_spec,
             filter_properties=filter_properties, node=None)
 
         self.mox.ReplayAll()
@@ -1228,11 +1228,11 @@ class _BaseTaskTestCase(object):
             # The API method is actually 'resize_instance'.  It gets
             # converted into 'migrate_server' when doing RPC.
             self.conductor.resize_instance(
-                self.context, inst_obj, {}, scheduler_hint, flavor, [])
+                self.context, inst_obj, {}, scheduler_hint, flavor, {})
         else:
             self.conductor.migrate_server(
                 self.context, inst_obj, scheduler_hint,
-                False, False, flavor, None, None, [])
+                False, False, flavor, None, None, {})
 
     def test_build_instances(self):
         system_metadata = flavors.save_flavor_info({},
@@ -1751,7 +1751,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         request_spec = dict(instance_type=dict(extra_specs=dict()),
                             instance_properties=dict())
         filter_props = dict(context=None)
-        resvs = 'fake-resvs'
+        resvs = {'fake': ['fake-resvs']}
         image = 'fake-image'
 
         self.mox.StubOutWithMock(compute_utils, 'get_image_metadata')
@@ -1787,7 +1787,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         # the correct project_id and user_id.
         project_id, user_id = quotas_obj.ids_from_instance(self.context,
                                                            inst_obj)
-        quota.QUOTAS.rollback(self.context, [resvs], project_id=project_id,
+        quota.QUOTAS.rollback(self.context, resvs, project_id=project_id,
                               user_id=user_id)
 
         self.mox.ReplayAll()
@@ -1795,7 +1795,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         self.assertRaises(exc.NoValidHost,
                           self.conductor._cold_migrate,
                           self.context, inst_obj,
-                          flavor, filter_props, [resvs])
+                          flavor, filter_props, resvs)
 
     def test_cold_migrate_no_valid_host_back_in_stopped_state(self):
         flavor = flavors.get_flavor_by_name('m1.tiny')
@@ -1808,7 +1808,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         request_spec = dict(instance_type=dict(extra_specs=dict()),
                             instance_properties=dict())
         filter_props = dict(context=None)
-        resvs = 'fake-resvs'
+        resvs = {'fake': ['fake-resvs']}
         image = 'fake-image'
 
         self.mox.StubOutWithMock(compute_utils, 'get_image_metadata')
@@ -1844,14 +1844,14 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         # the correct project_id and user_id.
         project_id, user_id = quotas_obj.ids_from_instance(self.context,
                                                            inst_obj)
-        quota.QUOTAS.rollback(self.context, [resvs], project_id=project_id,
+        quota.QUOTAS.rollback(self.context, resvs, project_id=project_id,
                               user_id=user_id)
 
         self.mox.ReplayAll()
 
         self.assertRaises(exc.NoValidHost,
                           self.conductor._cold_migrate, self.context,
-                          inst_obj, flavor, filter_props, [resvs])
+                          inst_obj, flavor, filter_props, resvs)
 
     def test_cold_migrate_no_valid_host_error_msg(self):
         flavor = flavors.get_flavor_by_name('m1.tiny')
@@ -1864,7 +1864,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         request_spec = dict(instance_type=dict(extra_specs=dict()),
                             instance_properties=dict())
         filter_props = dict(context=None)
-        resvs = 'fake-resvs'
+        resvs = {'fake': ['fake-resvs']}
         image = 'fake-image'
 
         with contextlib.nested(
@@ -1878,7 +1878,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         ) as (image_mock, brs_mock, select_dest_mock):
             nvh = self.assertRaises(exc.NoValidHost,
                                     self.conductor._cold_migrate, self.context,
-                                    inst_obj, flavor, filter_props, [resvs])
+                                    inst_obj, flavor, filter_props, resvs)
             self.assertIn('cold migrate', nvh.message)
 
     def test_cold_migrate_exception_host_in_error_state_and_raise(self):
@@ -1890,7 +1890,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         request_spec = dict(instance_type=dict(extra_specs=dict()),
                             instance_properties=dict())
         filter_props = dict(context=None)
-        resvs = 'fake-resvs'
+        resvs = {'fake': ['fake-resvs']}
         image = 'fake-image'
         hosts = [dict(host='host1', nodename=None, limits={})]
 
@@ -1930,7 +1930,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
 
         self.conductor.compute_rpcapi.prep_resize(
                 self.context, image, inst_obj,
-                'flavor', hosts[0]['host'], [resvs],
+                'flavor', hosts[0]['host'], resvs,
                 request_spec=request_spec,
                 filter_properties=expected_filter_props,
                 node=hosts[0]['nodename']).AndRaise(exc_info)
@@ -1946,7 +1946,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         # the correct project_id and user_id.
         project_id, user_id = quotas_obj.ids_from_instance(self.context,
                                                            inst_obj)
-        quota.QUOTAS.rollback(self.context, [resvs], project_id=project_id,
+        quota.QUOTAS.rollback(self.context, resvs, project_id=project_id,
                               user_id=user_id)
 
         self.mox.ReplayAll()
@@ -1954,7 +1954,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         self.assertRaises(test.TestingException,
                           self.conductor._cold_migrate,
                           self.context, inst_obj, 'flavor',
-                          filter_props, [resvs])
+                          filter_props, resvs)
 
     def test_resize_no_valid_host_error_msg(self):
         flavor = flavors.get_flavor_by_name('m1.tiny')
@@ -1968,7 +1968,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
         request_spec = dict(instance_type=dict(extra_specs=dict()),
                             instance_properties=dict())
         filter_props = dict(context=None)
-        resvs = 'fake-resvs'
+        resvs = {'fake': ['fake-resvs']}
         image = 'fake-image'
 
         with contextlib.nested(
@@ -1983,7 +1983,7 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             nvh = self.assertRaises(exc.NoValidHost,
                                     self.conductor._cold_migrate, self.context,
                                     inst_obj, flavor_new, filter_props,
-                                    [resvs])
+                                    resvs)
             self.assertIn('resize', nvh.message)
 
     def test_build_instances_instance_not_found(self):

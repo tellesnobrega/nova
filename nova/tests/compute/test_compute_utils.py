@@ -491,7 +491,7 @@ class UsageInfoTestCase(test.TestCase):
                 {'md_key1': 'val1', 'md_key2': 'val2'})
         image_ref_url = "%s/images/1" % glance.generate_glance_url()
         self.assertEqual(payload['image_ref_url'], image_ref_url)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_notify_usage_exists_deleted_instance(self):
         # Ensure 'exists' notification generates appropriate usage data.
@@ -504,7 +504,7 @@ class UsageInfoTestCase(test.TestCase):
                         'other_data': 'meow'}
         instance.system_metadata.update(sys_metadata)
         instance.save()
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
         instance = objects.Instance.get_by_id(
                 self.context.elevated(read_deleted='yes'), instance_id,
                 expected_attrs=['system_metadata'])
@@ -538,7 +538,7 @@ class UsageInfoTestCase(test.TestCase):
         instance_id = self._create_instance()
         instance = objects.Instance.get_by_id(self.context, instance_id,
                 expected_attrs=['metadata', 'system_metadata', 'info_cache'])
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
         compute_utils.notify_usage_exists(
             rpc.get_notifier('compute'), self.context, instance)
         msg = fake_notifier.NOTIFICATIONS[-1]
@@ -600,7 +600,7 @@ class UsageInfoTestCase(test.TestCase):
         self.assertEqual(payload['image_name'], 'fake_name')
         image_ref_url = "%s/images/1" % glance.generate_glance_url()
         self.assertEqual(payload['image_ref_url'], image_ref_url)
-        self.compute.terminate_instance(self.context, instance, [], [])
+        self.compute.terminate_instance(self.context, instance, [], {})
 
     def test_notify_about_aggregate_update_with_id(self):
         # Set aggregate payload

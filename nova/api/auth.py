@@ -117,6 +117,15 @@ class NovaKeystoneContext(wsgi.Middleware):
             # This is for legacy compatibility
             project_id = req.headers['X_TENANT']
         project_name = req.headers.get('X_TENANT_NAME')
+        if ('X_PROJECT_DOMAIN_ID' in req.headers and
+            req.headers['X_PROJECT_DOMAIN_ID'] != 'None'):
+                domain_id = req.headers['X_PROJECT_DOMAIN_ID']
+        elif ('X_USER_DOMAIN_ID' in req.headers and
+            req.headers['X_USER_DOMAIN_ID'] != 'None'):
+                domain_id = req.headers['X_USER_DOMAIN_ID']
+        else:
+            domain_id = 'default'
+
         user_name = req.headers.get('X_USER_NAME')
 
         req_id = req.environ.get(request_id.ENV_REQUEST_ID)
@@ -141,6 +150,7 @@ class NovaKeystoneContext(wsgi.Middleware):
 
         ctx = context.RequestContext(user_id,
                                      project_id,
+                                     domain_id,
                                      user_name=user_name,
                                      project_name=project_name,
                                      roles=roles,

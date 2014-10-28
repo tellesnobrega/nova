@@ -814,6 +814,7 @@ class API(base.Base):
             'config_drive': config_drive,
             'user_id': context.user_id,
             'project_id': context.project_id,
+            'domain_id': context.domain_id,
             'instance_type_id': instance_type['id'],
             'memory_mb': instance_type['memory_mb'],
             'vcpus': instance_type['vcpus'],
@@ -2385,7 +2386,7 @@ class API(base.Base):
                                            instance,
                                            migration,
                                            migration.source_compute,
-                                           quotas.reservations or [])
+                                           quotas.reservations or {})
 
     @staticmethod
     def _resize_quota_delta(context, new_flavor,

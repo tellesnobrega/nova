@@ -545,7 +545,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.compute_api._downsize_quota_delta(self.context, inst
                                                ).AndReturn('deltas')
         fake_quotas = objects.Quotas.from_reservations(self.context,
-                                                          ['rsvs'])
+                {'fake': ['rsvs']})
         self.compute_api._reserve_quota_delta(self.context, 'deltas', inst,
                                               ).AndReturn(fake_quotas)
         self.compute_api._record_action_start(
@@ -598,7 +598,7 @@ class _ComputeAPIUnitTestMixIn(object):
                 system_metadata=inst.system_metadata)
 
     def _test_delete(self, delete_type, **attrs):
-        reservations = ['fake-resv']
+        reservations = {'fake': ['fake-resv']}
         inst = self._create_instance_obj()
         inst.update(attrs)
         inst._context = self.context
@@ -806,7 +806,7 @@ class _ComputeAPIUnitTestMixIn(object):
                 attrs.update({'system_metadata': fake_sys_meta})
 
             attrs.update({'vm_state': vm_state, 'task_state': 'deleting'})
-            reservations = ['fake-resv']
+            reservations = {'fake': ['fake-resv']}
             inst = self._create_instance_obj()
             inst.update(attrs)
             inst._context = self.context
@@ -822,7 +822,7 @@ class _ComputeAPIUnitTestMixIn(object):
                 test_migration.fake_db_migration())
 
             fake_quotas = objects.Quotas.from_reservations(self.context,
-                                                           ['rsvs'])
+                    {'fake': ['rsvs']})
 
             image_api = self.compute_api.image_api
             rpcapi = self.compute_api.compute_rpcapi
@@ -1057,7 +1057,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.compute_api._downsize_quota_delta(self.context,
                                                fake_inst).AndReturn('deltas')
 
-        resvs = ['resvs']
+        resvs = {'fake': ['resvs']}
         fake_quotas = objects.Quotas.from_reservations(self.context, resvs)
 
         self.compute_api._reserve_quota_delta(self.context, 'deltas',
@@ -1076,7 +1076,7 @@ class _ComputeAPIUnitTestMixIn(object):
 
         self.compute_api.compute_rpcapi.confirm_resize(
                 self.context, fake_inst, fake_mig, 'compute-source',
-                [] if self.cell_type else fake_quotas.reservations)
+                {} if self.cell_type else fake_quotas.reservations)
 
         self.mox.ReplayAll()
 
@@ -1118,7 +1118,7 @@ class _ComputeAPIUnitTestMixIn(object):
         self.compute_api._reverse_upsize_quota_delta(
                 self.context, fake_mig).AndReturn('deltas')
 
-        resvs = ['resvs']
+        resvs = {'fake': ['resvs']}
         fake_quotas = objects.Quotas.from_reservations(self.context, resvs)
 
         self.compute_api._reserve_quota_delta(self.context, 'deltas',
@@ -1175,7 +1175,7 @@ class _ComputeAPIUnitTestMixIn(object):
         delta = ['delta']
         self.compute_api._reverse_upsize_quota_delta(
             self.context, fake_mig).AndReturn(delta)
-        resvs = ['resvs']
+        resvs = {'fake': ['resvs']}
         fake_quotas = objects.Quotas.from_reservations(self.context, resvs)
         self.compute_api._reserve_quota_delta(
             self.context, delta, fake_inst).AndReturn(fake_quotas)
@@ -1233,7 +1233,7 @@ class _ComputeAPIUnitTestMixIn(object):
 
         if (self.cell_type == 'compute' or
                 not (flavor_id_passed and same_flavor)):
-            resvs = ['resvs']
+            resvs = {'fake': ['resvs']}
             project_id, user_id = quotas_obj.ids_from_instance(self.context,
                                                                fake_inst)
             fake_quotas = objects.Quotas.from_reservations(self.context,

@@ -52,7 +52,7 @@ class Quotas(base.NovaObject):
     VERSION = '1.1'
 
     fields = {
-        'reservations': fields.ListOfStringsField(nullable=True),
+        'reservations': fields.DictOfListsOfStringsField(nullable=True),
         'project_id': fields.StringField(nullable=True),
         'user_id': fields.StringField(nullable=True),
     }
@@ -60,7 +60,7 @@ class Quotas(base.NovaObject):
     def __init__(self, *args, **kwargs):
         super(Quotas, self).__init__(*args, **kwargs)
         # Set up defaults.
-        self.reservations = []
+        self.reservations = {}
         self.project_id = None
         self.user_id = None
         self.obj_reset_changes()

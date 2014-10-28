@@ -40,11 +40,12 @@ class RequestContext(object):
 
     """
 
-    def __init__(self, user_id, project_id, is_admin=None, read_deleted="no",
-                 roles=None, remote_address=None, timestamp=None,
-                 request_id=None, auth_token=None, overwrite=True,
-                 quota_class=None, user_name=None, project_name=None,
-                 service_catalog=None, instance_lock_checked=False, **kwargs):
+    def __init__(self, user_id, project_id, domain_id=None,
+                 is_admin=None, read_deleted="no", roles=None,
+                 remote_address=None, timestamp=None, request_id=None,
+                 auth_token=None, overwrite=True, quota_class=None,
+                 user_name=None, project_name=None, service_catalog=None,
+                 instance_lock_checked=False, **kwargs):
         """:param read_deleted: 'no' indicates deleted records are hidden,
                 'yes' indicates deleted records are visible,
                 'only' indicates that *only* deleted records are visible.
@@ -62,6 +63,7 @@ class RequestContext(object):
 
         self.user_id = user_id
         self.project_id = project_id
+        self.domain_id = domain_id
         self.roles = roles or []
         self.read_deleted = read_deleted
         self.remote_address = remote_address
@@ -118,6 +120,7 @@ class RequestContext(object):
     def to_dict(self):
         return {'user_id': self.user_id,
                 'project_id': self.project_id,
+                'domain_id': self.domain_id,
                 'is_admin': self.is_admin,
                 'read_deleted': self.read_deleted,
                 'roles': self.roles,
@@ -169,6 +172,7 @@ class RequestContext(object):
 def get_admin_context(read_deleted="no"):
     return RequestContext(user_id=None,
                           project_id=None,
+                          domain_id=None,
                           is_admin=True,
                           read_deleted=read_deleted,
                           overwrite=False)
@@ -205,6 +209,15 @@ def authorize_project_context(context, project_id):
         if not context.project_id:
             raise exception.Forbidden()
         elif context.project_id != project_id:
+            raise exception.Forbidden()
+
+
+def authorize_domain_context(context, domain_id):
+    """Ensures a request has permission to access the given domain."""
+    if is_user_context(context):
+        if not context.domain_id:
+            raise exception.Forbidden()
+        elif context.domain_id != domain_id:
             raise exception.Forbidden()
 
 

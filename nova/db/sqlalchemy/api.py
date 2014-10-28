@@ -1677,6 +1677,19 @@ def _instance_data_get_for_user(context, project_id, user_id, session=None):
     return (result[0] or 0, result[1] or 0, result[2] or 0)
 
 
+def _instance_data_get_for_domain(context, domain_id, session=None):
+    result = model_query(context,
+                         func.count(models.Instance.id),
+                         func.sum(models.Instance.vcpus),
+                         func.sum(models.Instance.memory_mb),
+                         base_model=models.Instance,
+                         session=session).\
+                     filter_by(domain_id=domain_id)
+    result = result.first()
+    # NOTE(vish): convert None to 0
+    return (result[0] or 0, result[1] or 0, result[2] or 0)
+
+
 @require_context
 @_retry_on_deadlock
 def instance_destroy(context, instance_uuid, constraint=None):
@@ -2904,6 +2917,19 @@ def quota_get(context, project_id, resource, user_id=None):
 
 
 @require_context
+def domain_quota_get(context, domain_id, resource, user_id=None):
+    model = models.DomainQuota
+    query = model_query(context, model).\
+                    filter_by(domain_id=domain_id).\
+                    filter_by(resource=resource)
+    result = query.first()
+    if not result:
+        raise exception.DomainQuotaNotFound(domain_id=domain_id)
+
+    return result
+
+
+@require_context
 def quota_get_all_by_project_and_user(context, project_id, user_id):
     nova.context.authorize_project_context(context, project_id)
 
@@ -2917,6 +2943,20 @@ def quota_get_all_by_project_and_user(context, project_id, user_id):
     result = {'project_id': project_id, 'user_id': user_id}
     for user_quota in user_quotas:
         result[user_quota.resource] = user_quota.hard_limit
+
+    return result
+
+
+@require_context
+def quota_get_all_by_domain(context, domain_id):
+    nova.context.authorize_domain_context(context, domain_id)
+
+    query = model_query(context, models.DomainQuota, read_deleted="no")
+    rows = query.filter_by(domain_id=domain_id).all()
+
+    result = {'domain_id': domain_id}
+    for row in rows:
+        result[row.resource] = row.hard_limit
 
     return result
 
@@ -2947,6 +2987,17 @@ def quota_get_all(context, project_id):
     return result
 
 
+@require_context
+def domain_quota_get_all(context, domain_id):
+    nova.context.authorize_domain_context(context, domain_id)
+
+    result = model_query(context, models.DomainQuota).\
+                   filter_by(domain_id=domain_id).\
+                   all()
+
+    return result
+
+
 @require_admin_context
 def quota_create(context, project_id, resource, limit, user_id=None):
     per_user = user_id and resource not in PER_PROJECT_QUOTAS
@@ -2960,6 +3011,20 @@ def quota_create(context, project_id, resource, limit, user_id=None):
         quota_ref.save()
     except db_exc.DBDuplicateEntry:
         raise exception.QuotaExists(project_id=project_id, resource=resource)
+    return quota_ref
+
+
+@require_admin_context
+def domain_quota_create(context, domain_id, resource, limit, user_id=None):
+    quota_ref = models.DomainQuota()
+    quota_ref.domain_id = domain_id
+    quota_ref.resource = resource
+    quota_ref.hard_limit = limit
+    try:
+        quota_ref.save()
+    except db_exc.DBDuplicateEntry:
+        raise exception.DomainQuotaExists(domain_id=domain_id,
+                                          resource=resource)
     return quota_ref
 
 
@@ -2982,6 +3047,17 @@ def quota_update(context, project_id, resource, limit, user_id=None):
             raise exception.ProjectQuotaNotFound(project_id=project_id)
 
 
+@require_admin_context
+def domain_quota_update(context, domain_id, resource, limit, user_id=None):
+    model = models.DomainQuota
+    query = model_query(context, model).\
+                filter_by(domain_id=domain_id).\
+                filter_by(resource=resource)
+    result = query.update({'hard_limit': limit})
+    if not result:
+        raise exception.DomainQuotaNotFound(domain_id=domain_id)
+
+
 ###################
 
 
@@ -2999,6 +3075,18 @@ def quota_class_get(context, class_name, resource):
 
 
 def quota_class_get_default(context):
+    rows = model_query(context, models.QuotaClass, read_deleted="no").\
+                   filter_by(class_name=_DEFAULT_QUOTA_NAME).\
+                   all()
+
+    result = {'class_name': _DEFAULT_QUOTA_NAME}
+    for row in rows:
+        result[row.resource] = row.hard_limit
+
+    return result
+
+
+def quota_domain_get_default(context):
     rows = model_query(context, models.QuotaClass, read_deleted="no").\
                    filter_by(class_name=_DEFAULT_QUOTA_NAME).\
                    all()
@@ -3068,6 +3156,25 @@ def quota_usage_get(context, project_id, resource, user_id=None):
     return result
 
 
+@require_context
+def domain_quota_usage_get(context, domain_id, resource, user_id=None):
+    query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
+                     filter_by(domain_id=domain_id).\
+                     filter_by(resource=resource)
+    if user_id:
+        if resource not in PER_PROJECT_QUOTAS:
+            result = query.filter_by(user_id=user_id).first()
+        else:
+            result = query.filter_by(user_id=None).first()
+    else:
+        result = query.first()
+
+    if not result:
+        raise exception.QuotaUsageNotFound(domain_id=domain_id)
+
+    return result
+
+
 def _quota_usage_get_all(context, project_id, user_id=None):
     nova.context.authorize_project_context(context, project_id)
     query = model_query(context, models.QuotaUsage, read_deleted="no").\
@@ -3090,6 +3197,23 @@ def _quota_usage_get_all(context, project_id, user_id=None):
     return result
 
 
+def _domain_quota_usage_get_all(context, domain_id, user_id=None):
+    nova.context.authorize_domain_context(context, domain_id)
+    query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
+                   filter_by(domain_id=domain_id)
+
+    result = {'domain_id': domain_id}
+    rows = query.all()
+    for row in rows:
+        if row.resource in result:
+            result[row.resource]['in_use'] += row.in_use
+            result[row.resource]['reserved'] += row.reserved
+        else:
+            result[row.resource] = dict(in_use=row.in_use,
+                                        reserved=row.reserved)
+    return result
+
+
 @require_context
 def quota_usage_get_all_by_project_and_user(context, project_id, user_id):
     return _quota_usage_get_all(context, project_id, user_id=user_id)
@@ -3098,6 +3222,28 @@ def quota_usage_get_all_by_project_and_user(context, project_id, user_id):
 @require_context
 def quota_usage_get_all_by_project(context, project_id):
     return _quota_usage_get_all(context, project_id)
+
+
+def quota_usage_get_all_by_domain(context, domain_id):
+    nova.context.authorize_domain_context(context, domain_id)
+    query = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
+                   filter_by(domain_id=domain_id)
+    result = {'domain_id': domain_id}
+
+    rows = query.all()
+    for row in rows:
+        if row.resource in result:
+            result[row.resource]['in_use'] += row.in_use
+            result[row.resource]['reserved'] += row.reserved
+        else:
+            result[row.resource] = dict(in_use=row.in_use,
+                                        reserved=row.reserved)
+
+    return result
+
+
+def domain_quota_usage_get_all(context, domain_id):
+    return _domain_quota_usage_get_all(context, domain_id)
 
 
 def _quota_usage_create(project_id, user_id, resource, in_use,
@@ -3111,6 +3257,24 @@ def _quota_usage_create(project_id, user_id, resource, in_use,
     quota_usage_ref.until_refresh = until_refresh
     # updated_at is needed for judgement of max_age
     quota_usage_ref.updated_at = timeutils.utcnow()
+    quota_usage_ref.created_at = timeutils.utcnow()
+
+    quota_usage_ref.save(session=session)
+
+    return quota_usage_ref
+
+
+def _domain_quota_usage_create(context, domain_id, resource, in_use,
+                        reserved, until_refresh, session=None):
+    quota_usage_ref = models.DomainQuotaUsage()
+    quota_usage_ref.domain_id = domain_id
+    quota_usage_ref.resource = resource
+    quota_usage_ref.in_use = in_use
+    quota_usage_ref.reserved = reserved
+    quota_usage_ref.until_refresh = until_refresh
+    # updated_at is needed for judgement of max_age
+    quota_usage_ref.updated_at = timeutils.utcnow()
+    quota_usage_ref.created_at = timeutils.utcnow()
 
     quota_usage_ref.save(session=session)
 
@@ -3136,6 +3300,23 @@ def quota_usage_update(context, project_id, user_id, resource, **kwargs):
         raise exception.QuotaUsageNotFound(project_id=project_id)
 
 
+@require_admin_context
+def domain_quota_usage_update(context, domain_id, resource, **kwargs):
+    updates = {}
+
+    for key in ['in_use', 'reserved', 'until_refresh']:
+        if key in kwargs:
+            updates[key] = kwargs[key]
+
+    result = model_query(context, models.DomainQuotaUsage, read_deleted="no").\
+                     filter_by(domain_id=domain_id).\
+                     filter_by(resource=resource).\
+                     update(updates)
+
+    if not result:
+        raise exception.DomainQuotaUsageNotFound(domain_id=domain_id)
+
+
 ###################
 
 
@@ -3149,8 +3330,53 @@ def _reservation_create(uuid, usage, project_id, user_id, resource,
     reservation_ref.resource = resource
     reservation_ref.delta = delta
     reservation_ref.expire = expire
+    reservation_ref.updated_at = timeutils.utcnow()
+    reservation_ref.created_at = timeutils.utcnow()
     reservation_ref.save(session=session)
     return reservation_ref
+
+
+def _domain_reservation_create(context, uuid, usage, domain_id, resource,
+                        delta, expire, session=None):
+
+    reservation_ref = models.DomainReservation()
+    reservation_ref.uuid = uuid
+    reservation_ref.usage_id = usage['id']
+    reservation_ref.domain_id = domain_id
+    reservation_ref.resource = resource
+    reservation_ref.delta = delta
+    reservation_ref.expire = expire
+    reservation_ref.updated_at = timeutils.utcnow()
+    reservation_ref.created_at = timeutils.utcnow()
+    reservation_ref.save(session=session)
+
+    return reservation_ref
+
+
+@require_context
+def reservation_get(context, uuid):
+    result = model_query(context, models.Reservation, read_deleted="no").\
+                     filter_by(uuid=uuid).\
+                     first()
+
+    if not result:
+        raise exception.ReservationNotFound(uuid=uuid)
+
+    return result
+
+
+@require_context
+def domain_reservation_get(context, uuid):
+    result = model_query(context, models.DomainReservation,
+                         read_deleted="no").\
+                     filter_by(uuid=uuid).\
+                     first()
+
+    if not result:
+        raise exception.ReservationNotFound(uuid=uuid)
+
+    return result
+
 
 
 ###################
@@ -3337,6 +3563,16 @@ def _calculate_overquota(project_quotas, user_quotas, deltas,
     return overs
 
 
+def _get_domain_quota_usages(context, session, domain_id):
+    rows = model_query(context, models.DomainQuotaUsage,
+                       read_deleted="no",
+                       session=session).\
+                   filter_by(domain_id=domain_id).\
+                   with_lockmode('update').\
+                   all()
+    return dict((row.resource, row) for row in rows)
+
+
 @require_context
 @_retry_on_deadlock
 def quota_reserve(context, resources, project_quotas, user_quotas, deltas,
@@ -3471,6 +3707,179 @@ def _quota_reservations_query(session, context, reservations):
                    with_lockmode('update')
 
 
+def _domain_quota_reservations_query(session, context, reservations):
+    """Return the relevant domain reservations."""
+
+    # Get the listed reservations
+    return model_query(context, models.DomainReservation,
+                       read_deleted="no",
+                       session=session).\
+                   filter(models.DomainReservation.uuid.in_(reservations)).\
+                   with_lockmode('update')
+
+
+@require_context
+@_retry_on_deadlock
+def domain_quota_reserve(context, resources, domain_quotas, deltas, expire,
+                         until_refresh, max_age, project_list, domain_id=None):
+    elevated = context.elevated()
+    session = get_session()
+    with session.begin():
+
+        if domain_id is None:
+            domain_id = context.domain_id
+
+        # Get the current usages
+        domain_usages = _get_domain_quota_usages(context, session, domain_id)
+
+        # Handle usage refresh
+        work = set(deltas.keys())
+
+        """auth_url = None
+        for service in context.service_catalog:
+            if service['name'] == 'keystone':
+                auth_url = service['endpoints'][0]['adminURL']
+
+        keystone = client.Client(token=context.auth_token,
+                                 auth_url=auth_url,
+                                 tenant_id=context.project_id)"""
+
+        while work:
+            resource = work.pop()
+
+            # Do we need to refresh the usage?
+            refresh = False
+            if resource not in domain_usages:
+                domain_usages[resource] = _domain_quota_usage_create(elevated,
+                                                      domain_id,
+                                                      resource,
+                                                      0, 0,
+                                                      until_refresh or None,
+                                                      session=session)
+                refresh = True
+            elif domain_usages[resource].in_use < 0:
+                # Negative in_use count indicates a desync, so try to
+                # heal from that...
+                refresh = True
+            elif domain_usages[resource].until_refresh is not None:
+                domain_usages[resource].until_refresh -= 1
+                if domain_usages[resource].until_refresh <= 0:
+                    refresh = True
+            elif max_age and (domain_usages[resource].updated_at -
+                              timeutils.utcnow()).seconds >= max_age:
+                refresh = True
+
+            # OK, refresh the usage
+            if refresh:
+                # Grab the sync routine
+                sync = QUOTA_SYNC_FUNCTIONS[resources[resource].sync]
+                for project in project_list:
+                    project_id = project.id
+                    updates = sync(elevated, project_id, None, session)
+                    for res, in_use in updates.items():
+                        # Make sure we have a destination for the usage!
+                        if res not in domain_usages:
+                            domain_usages[res] = _domain_quota_usage_create(
+                                elevated,
+                                domain_id,
+                                res,
+                                0, 0,
+                                until_refresh or None,
+                                session=session)
+
+                    if domain_usages[res].in_use != in_use:
+                        LOG.debug(_('quota_usages out of sync, updating. '
+                                    'domain_id: %(domain_id)s, '
+                                    'resource: %(res)s, '
+                                    'tracked usage: %(tracked_use)s, '
+                                    'actual usage: %(in_use)s'),
+                            {'domain_id': domain_id,
+                             'res': res,
+                             'tracked_use': domain_usages[res].in_use,
+                             'in_use': in_use})
+
+                    # Update the usage
+                    domain_usages[res].in_use = in_use
+                    domain_usages[res].until_refresh = until_refresh or None
+
+                    # Because more than one resource may be refreshed
+                    # by the call to the sync routine, and we don't
+                    # want to double-sync, we make sure all refreshed
+                    # resources are dropped from the work set.
+                    work.discard(res)
+
+                    # NOTE(Vek): We make the assumption that the sync
+                    #            routine actually refreshes the
+                    #            resources that it is the sync routine
+                    #            for.  We don't check, because this is
+                    #            a best-effort mechanism."""
+
+        # Check for deltas that would go negative
+        unders = [res for res, delta in deltas.items()
+                  if delta < 0 and
+                  delta + domain_usages[res].in_use < 0]
+
+        # Now, let's check the quotas
+        # NOTE(Vek): We're only concerned about positive increments.
+        #            If a project has gone over quota, we want them to
+        #            be able to reduce their usage without any
+        #            problems.
+        overs = [res for res, delta in deltas.items()
+                 if domain_quotas[res] >= 0 and delta >= 0 and
+                 (domain_quotas[res] < delta +
+                  domain_usages[res]['total'])]
+
+        # NOTE(Vek): The quota check needs to be in the transaction,
+        #            but the transaction doesn't fail just because
+        #            we're over quota, so the OverQuota raise is
+        #            outside the transaction.  If we did the raise
+        #            here, our usage updates would be discarded, but
+        #            they're not invalidated by being over-quota.
+
+        # Create the reservations
+        if not overs:
+            reservations = []
+            for res, delta in deltas.items():
+                reservation = _domain_reservation_create(elevated,
+                                                         str(uuid.uuid4()),
+                                                         domain_usages[res],
+                                                         domain_id,
+                                                         res, delta, expire,
+                                                         session=session)
+                reservations.append(reservation.uuid)
+
+                # Also update the reserved quantity
+                # NOTE(Vek): Again, we are only concerned here about
+                #            positive increments.  Here, though, we're
+                #            worried about the following scenario:
+                #
+                #            1) User initiates resize down.
+                #            2) User allocates a new instance.
+                #            3) Resize down fails or is reverted.
+                #            4) User is now over quota.
+                #
+                #            To prevent this, we only update the
+                #            reserved value if the delta is positive.
+                if delta > 0:
+                    domain_usages[res].reserved += delta
+
+        # Apply updates to the usages table
+        for usage_ref in domain_usages.values():
+            session.add(usage_ref)
+
+    if unders:
+        LOG.warning(_("Change will make usage less than 0 for the following "
+                      "resources: %s"), unders)
+    if overs:
+        usages = domain_usages
+        usages = dict((k, dict(in_use=v['in_use'], reserved=v['reserved']))
+                      for k, v in usages.items())
+        raise exception.OverQuota(overs=sorted(overs), quotas=domain_quotas,
+                                  usages=usages)
+
+    return reservations
+
+
 @require_context
 @_retry_on_deadlock
 def reservation_commit(context, reservations, project_id=None, user_id=None):
@@ -3490,6 +3899,23 @@ def reservation_commit(context, reservations, project_id=None, user_id=None):
 
 @require_context
 @_retry_on_deadlock
+def domain_reservation_commit(context, reservations, domain_id=None):
+    session = get_session()
+    with session.begin():
+        usages = _get_domain_quota_usages(context, session, domain_id)
+        reservation_query = _domain_quota_reservations_query(session, context,
+                                                             reservations)
+        for reservation in reservation_query.all():
+            usage = usages[reservation.resource]
+            if reservation.delta >= 0:
+                usage.reserved -= reservation.delta
+            usage.in_use += reservation.delta
+        reservation_query.soft_delete(synchronize_session=False)
+
+
+
+@require_context
+@_retry_on_deadlock
 def reservation_rollback(context, reservations, project_id=None, user_id=None):
     session = get_session()
     with session.begin():
@@ -3499,6 +3925,21 @@ def reservation_rollback(context, reservations, project_id=None, user_id=None):
                                                       reservations)
         for reservation in reservation_query.all():
             usage = user_usages[reservation.resource]
+            if reservation.delta >= 0:
+                usage.reserved -= reservation.delta
+        reservation_query.soft_delete(synchronize_session=False)
+
+
+@require_context
+@_retry_on_deadlock
+def domain_reservation_rollback(context, reservations, domain_id=None):
+    session = get_session()
+    with session.begin():
+        usages = _get_domain_quota_usages(context, session, domain_id)
+        reservation_query = _domain_quota_reservations_query(session, context,
+                                                             reservations)
+        for reservation in reservation_query.all():
+            usage = usages[reservation.resource]
             if reservation.delta >= 0:
                 usage.reserved -= reservation.delta
         reservation_query.soft_delete(synchronize_session=False)
@@ -3563,6 +4004,26 @@ def reservation_expire(context):
                             filter(models.Reservation.expire < current_time)
 
         for reservation in reservation_query.join(models.QuotaUsage).all():
+            if reservation.delta >= 0:
+                reservation.usage.reserved -= reservation.delta
+                session.add(reservation.usage)
+
+        reservation_query.soft_delete(synchronize_session=False)
+
+
+@require_admin_context
+@_retry_on_deadlock
+def domain_reservation_expire(context):
+    session = get_session()
+    with session.begin():
+        current_time = timeutils.utcnow()
+        reservation_query = model_query(context, models.DomainReservation,
+                                        session=session, read_deleted="no").\
+                            filter(models.DomainReservation.expire
+                                    < current_time)
+
+        for reservation in reservation_query.join(models.DomainQuotaUsage
+                                                  ).all():
             if reservation.delta >= 0:
                 reservation.usage.reserved -= reservation.delta
                 session.add(reservation.usage)

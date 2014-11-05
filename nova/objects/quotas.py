@@ -49,7 +49,7 @@ def ids_from_server_group(context, server_group):
 class Quotas(base.NovaObject):
     # Version 1.0: initial version
     # Version 1.1: Added create_limit() and update_limit()
-    VERSION = '1.1'
+    VERSION = '1.2'
 
     fields = {
         'reservations': fields.DictOfListsOfStringsField(nullable=True),

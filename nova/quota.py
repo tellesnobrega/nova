@@ -1806,9 +1806,6 @@ class QuotaEngine(object):
                 and self._driver.limit_check(context, self._resources, values,
                                                  project_id=project_id,
                                                  user_id=user_id))
-        #return self._driver.limit_check(context, self._resources, values,
-        #                                project_id=project_id,
-        #                                user_id=user_id)
 
 
     def reserve(self, context, expire=None, project_id=None, user_id=None,

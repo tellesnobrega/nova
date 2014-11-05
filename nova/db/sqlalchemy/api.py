@@ -3353,32 +3353,6 @@ def _domain_reservation_create(context, uuid, usage, domain_id, resource,
     return reservation_ref
 
 
-@require_context
-def reservation_get(context, uuid):
-    result = model_query(context, models.Reservation, read_deleted="no").\
-                     filter_by(uuid=uuid).\
-                     first()
-
-    if not result:
-        raise exception.ReservationNotFound(uuid=uuid)
-
-    return result
-
-
-@require_context
-def domain_reservation_get(context, uuid):
-    result = model_query(context, models.DomainReservation,
-                         read_deleted="no").\
-                     filter_by(uuid=uuid).\
-                     first()
-
-    if not result:
-        raise exception.ReservationNotFound(uuid=uuid)
-
-    return result
-
-
-
 ###################
 
 
@@ -3911,7 +3885,6 @@ def domain_reservation_commit(context, reservations, domain_id=None):
                 usage.reserved -= reservation.delta
             usage.in_use += reservation.delta
         reservation_query.soft_delete(synchronize_session=False)
-
 
 
 @require_context

@@ -898,20 +898,6 @@ class DomainQuotaDriverTestCase(test.TestCase):
         self.stubs.Set(self.driverDomain, 'get_domain_quotas',
                        fake_get_domain_quotas)
 
-    def test_limit_check(self):
-        self._stub_get_domain_quotas()
-        self.driverDomain.limit_check
-
-    def _stub_get_project_quotas(self):
-        def fake_get_project_quotas(context, resources, project_id,
-                                    quota_class=None, defaults=True,
-                                    usages=True, remains=False):
-            self.calls.append('get_domain_quotas')
-            return dict((k, dict(limit=v.default))
-                        for k, v in resources.items())
-
-        self.stubs.Set(self.driverDomain, 'get_domain_quotas',
-                       fake_get_domain_quotas)
 
     def test_limit_check(self):
         self._stub_get_domain_quotas()

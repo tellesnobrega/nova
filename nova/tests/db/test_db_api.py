@@ -75,6 +75,16 @@ def _reservation_get(context, uuid):
     return result
 
 
+def _domain_reservation_get(context, uuid):
+    result = sqlalchemy_api.model_query(context, models.DomainReservation,
+            read_deleted="no").filter_by(uuid=uuid).first()
+
+    if not result:
+        raise exception.ReservationNotFound(uuid=uuid)
+
+    return result
+
+
 def _quota_reserve(context, project_id, user_id):
     """Create sample Quota, QuotaUsage and Reservation objects.
 
@@ -1202,21 +1212,6 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'expire': timeutils.utcnow() + datetime.timedelta(days=1),
                 'usage': {'id': 1}}
 
-    def test_domain_reservation_get(self):
-        ###TODO fix test using quota reserve
-#        reservation = db.domain_reservation_create(self.ctxt, **self.values)
-#        reservation_db = db.domain_reservation_get(self.ctxt,
-#                                                   self.values['uuid'])
-#
-#        print reservation, reservation_db
-#        self._assertEqualObjects(reservation, reservation_db)
-        pass
-
-    def test_domain_reservation_get_nonexistent(self):
-        self.assertRaises(exception.ReservationNotFound,
-                          db.domain_reservation_get,
-                          self.ctxt, 'non-exitent-resevation-uuid')
-
     def test_domain_reservation_commit(self):
         reservations = _domain_quota_reserve(self.ctxt, 'domain1')
         expected = {'domain_id': 'domain1',
@@ -1225,10 +1220,10 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'fixed_ips': {'reserved': 2, 'in_use': 2}}
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))
-        db.domain_reservation_get(self.ctxt, reservations[0])
+        _domain_reservation_get(self.ctxt, reservations[0])
         db.domain_reservation_commit(self.ctxt, reservations, 'domain1')
         self.assertRaises(exception.ReservationNotFound,
-            db.domain_reservation_get, self.ctxt, reservations[0])
+            _domain_reservation_get, self.ctxt, reservations[0])
         expected = {'domain_id': 'domain1',
                 'resource0': {'reserved': 0, 'in_use': 0},
                 'resource1': {'reserved': 0, 'in_use': 2},
@@ -1244,10 +1239,10 @@ class DomainReservationTestCase(test.TestCase, ModelsObjectComparatorMixin):
                 'fixed_ips': {'reserved': 2, 'in_use': 2}}
         self.assertEqual(expected, db.domain_quota_usage_get_all(
                                             self.ctxt, 'domain1'))
-        db.domain_reservation_get(self.ctxt, reservations[0])
+        _domain_reservation_get(self.ctxt, reservations[0])
         db.domain_reservation_rollback(self.ctxt, reservations, 'domain1')
         self.assertRaises(exception.ReservationNotFound,
-            db.domain_reservation_get, self.ctxt, reservations[0])
+            _domain_reservation_get, self.ctxt, reservations[0])
         expected = {'domain_id': 'domain1',
                 'resource0': {'reserved': 0, 'in_use': 0},
                 'resource1': {'reserved': 0, 'in_use': 1},

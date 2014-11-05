@@ -3913,7 +3913,6 @@ def domain_reservation_commit(context, reservations, domain_id=None):
         reservation_query.soft_delete(synchronize_session=False)
 
 
-
 @require_context
 @_retry_on_deadlock
 def reservation_rollback(context, reservations, project_id=None, user_id=None):

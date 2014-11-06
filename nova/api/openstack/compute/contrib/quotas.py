@@ -231,6 +231,73 @@ class QuotaSetsController(wsgi.Controller):
         raise webob.exc.HTTPNotFound()
 
 
+class DomainQuotaSetsController(wsgi.Controller):
+
+    supported_quotas = []
+
+    def __init__(self, ext_mgr):
+        self.ext_mgr = ext_mgr
+        self.supported_quotas = QUOTAS.resources
+        for resource, extension in EXTENDED_QUOTAS.items():
+            if not self.ext_mgr.is_loaded(extension):
+                self.supported_quotas.remove(resource)
+
+    def _format_quota_set(self, domain_id, quota_set):
+        """Convert the quota object to a result dict."""
+
+        if domain_id:
+            result = dict(id=str(domain_id))
+        else:
+            result = {}
+
+        for resource in self.supported_quotas:
+            if resource in quota_set:
+                result[resource] = quota_set[resource]
+
+        return dict(quota_set=result)
+
+    def _validate_quota_limit(self, resource, limit, minimum, maximum):
+        # NOTE: -1 is a flag value for unlimited
+        if limit < -1:
+            msg = (_("Quota limit %(limit)s for %(resource)s "
+                     "must be -1 or greater.") %
+                   {'limit': limit, 'resource': resource})
+            raise webob.exc.HTTPBadRequest(explanation=msg)
+        if ((limit < minimum) and
+           (maximum != -1 or (maximum == -1 and limit != -1))):
+            msg = (_("Quota limit %(limit)s for %(resource)s must "
+                     "be greater than or equal to already used and "
+                     "reserved %(minimum)s.") %
+                   {'limit': limit, 'resource': resource, 'minimum': minimum})
+            raise webob.exc.HTTPBadRequest(explanation=msg)
+        if maximum != -1 and limit > maximum:
+            msg = (_("Quota limit %(limit)s for %(resource)s must be "
+                     "less than or equal to %(maximum)s.") %
+                   {'limit': limit, 'resource': resource, 'maximum': maximum})
+            raise webob.exc.HTTPBadRequest(explanation=msg)
+
+    def _get_quotas(self, context, id, usages=False):
+
+        values = QUOTAS.get_domain_quotas(context, id, usages=usages)
+
+        if usages:
+            return values
+        else:
+            return dict((k, v['limit']) for k, v in values.items())
+
+    @wsgi.serializers(xml=QuotaTemplate)
+    def show(self, req, id):
+        context = req.environ['nova.context']
+        authorize_show(context)
+        params = urlparse.parse_qs(req.environ.get('QUERY_STRING', ''))
+        try:
+            nova.context.authorize_domain_context(context, id)
+            return self._format_quota_set(id,
+                    self._get_quotas(context, id))
+        except exception.Forbidden:
+            raise webob.exc.HTTPForbidden()
+
+
 class Quotas(extensions.ExtensionDescriptor):
     """Quotas management support."""
 
@@ -243,6 +310,25 @@ class Quotas(extensions.ExtensionDescriptor):
         resources = []
 
         res = extensions.ResourceExtension('os-quota-sets',
+                                            QuotaSetsController(self.ext_mgr),
+                                            member_actions={'defaults': 'GET'})
+        resources.append(res)
+
+        return resources
+
+
+class DomainQuotas(extensions.ExtensionDescriptor):
+    """DomainQuotas management support."""
+
+    name = "DomainQuotas"
+    alias = "os-domain-quota-sets"
+    namespace = "http://docs.openstack.org/compute/ext/quotas-sets/api/v1.1"
+    updated = "2011-08-08T00:00:00Z"
+
+    def get_resources(self):
+        resources = []
+
+        res = extensions.ResourceExtension('os-domain-quota-sets',
                                             QuotaSetsController(self.ext_mgr),
                                             member_actions={'defaults': 'GET'})
         resources.append(res)
